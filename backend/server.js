@@ -1,11 +1,8 @@
 const http = require("http");
-const fs = require("fs");
-const path = require("path");
 const { URL } = require("url");
+const { createStorage } = require("./storage");
 
 const PORT = Number(process.env.PORT || 4000);
-const DEFAULT_DATA_PATH = path.join(__dirname, "data", "store.json");
-const DATA_PATH = process.env.DATA_PATH || path.join(process.env.DATA_DIR || path.join(__dirname, "data"), "store.json");
 const DEFAULT_CITY = {
   name: "Ludhiana, Punjab, India",
   lat: 30.900965,
@@ -73,42 +70,18 @@ const DEFAULT_BUS_ROUTES = [
   },
 ];
 
-const DRIVER_POOL = [
-  {
-    id: "d1",
-    name: "Ramesh Kumar",
-    vehicleNo: "PB-01-AB-1234",
-    vehicleType: "cab",
-    rating: 4.8,
-    phone: "9876543212",
-    latOffset: 0.012,
-    lonOffset: 0.01,
-  },
-  {
-    id: "d2",
-    name: "Suresh Yadav",
-    vehicleNo: "PB-02-CD-5678",
-    vehicleType: "auto",
-    rating: 4.6,
-    phone: "9876543213",
-    latOffset: -0.01,
-    lonOffset: 0.008,
-  },
-  {
-    id: "d3",
-    name: "Vijay Singh",
-    vehicleNo: "PB-03-EF-9012",
-    vehicleType: "bike",
-    rating: 4.7,
-    phone: "9876543216",
-    latOffset: 0.008,
-    lonOffset: -0.011,
-  },
-];
+const DEFAULT_STORE = {
+  users: [],
+  rides: [],
+  busRoutes: DEFAULT_BUS_ROUTES,
+  busBookings: [],
+  sharedRideRequests: [],
+};
+
+let storage;
 
 function readStore() {
-  ensureDataFile();
-  const store = JSON.parse(fs.readFileSync(DATA_PATH, "utf8"));
+  const store = storage.readStore();
   if (!Array.isArray(store.busRoutes)) {
     store.busRoutes = DEFAULT_BUS_ROUTES.map((route) => ({ ...route }));
   }
@@ -118,30 +91,17 @@ function readStore() {
   if (!Array.isArray(store.sharedRideRequests)) {
     store.sharedRideRequests = [];
   }
+  if (!Array.isArray(store.users)) {
+    store.users = [];
+  }
+  if (!Array.isArray(store.rides)) {
+    store.rides = [];
+  }
   return store;
 }
 
-function writeStore(data) {
-  ensureDataFile();
-  fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2));
-}
-
-function ensureDataFile() {
-  const dataDir = path.dirname(DATA_PATH);
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-  if (fs.existsSync(DATA_PATH)) {
-    return;
-  }
-  if (fs.existsSync(DEFAULT_DATA_PATH)) {
-    fs.copyFileSync(DEFAULT_DATA_PATH, DATA_PATH);
-    return;
-  }
-  fs.writeFileSync(
-    DATA_PATH,
-    JSON.stringify({ users: [], rides: [], busRoutes: DEFAULT_BUS_ROUTES, busBookings: [], sharedRideRequests: [] }, null, 2)
-  );
+async function writeStore(data) {
+  await storage.writeStore(data);
 }
 
 function getBusRoutes(store) {
@@ -819,7 +779,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       store.users.push(user);
-      writeStore(store);
+      await writeStore(store);
       sendJson(res, 201, { user: safeUser(user) });
       return;
     }
@@ -836,14 +796,14 @@ const server = http.createServer(async (req, res) => {
       if (req.method === "POST") {
         const body = await parseBody(req);
         user.pushToken = normalizeText(body.token);
-        writeStore(store);
+        await writeStore(store);
         sendJson(res, 200, { ok: true });
         return;
       }
 
       if (req.method === "DELETE") {
         delete user.pushToken;
-        writeStore(store);
+        await writeStore(store);
         sendJson(res, 200, { ok: true });
         return;
       }
@@ -918,7 +878,7 @@ const server = http.createServer(async (req, res) => {
         request.status = "full";
       }
 
-      writeStore(store);
+      await writeStore(store);
       await notifyUserById(store, request.ownerId, {
         title: "Shared ride joined",
         body: isFull
@@ -949,7 +909,7 @@ const server = http.createServer(async (req, res) => {
 
       request.status = "closed";
       request.updatedAt = new Date().toISOString();
-      writeStore(store);
+      await writeStore(store);
       sendJson(res, 200, { request: serializeSharedRideRequest(store, request) });
       return;
     }
@@ -990,7 +950,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       store.busRoutes = [...routes, route];
-      writeStore(store);
+      await writeStore(store);
       sendJson(res, 201, { route, routes: store.busRoutes });
       return;
     }
@@ -1085,7 +1045,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       store.rides.unshift(ride);
-      writeStore(store);
+      await writeStore(store);
       await notifyUserById(store, ride.userId, {
         title: "Ride request sent",
         body: `${nearbyDrivers.length} nearby drivers received your request.`,
@@ -1144,7 +1104,7 @@ const server = http.createServer(async (req, res) => {
       }
       driver.online = Boolean(body.online);
       driver.lastSeenAt = new Date().toISOString();
-      writeStore(store);
+      await writeStore(store);
       sendJson(res, 200, { driver: safeUser(driver) });
       return;
     }
@@ -1185,7 +1145,7 @@ const server = http.createServer(async (req, res) => {
         }
       });
 
-      writeStore(store);
+      await writeStore(store);
       const dashboard = buildDriverDashboard(store, driverId);
       sendJson(res, 200, dashboard);
       return;
@@ -1245,7 +1205,7 @@ const server = http.createServer(async (req, res) => {
         ride.status = BOOKING_STATUS.ACCEPTED;
         ride.acceptedAt = new Date().toISOString();
         ride.updatedAt = new Date().toISOString();
-        writeStore(store);
+        await writeStore(store);
         await notifyUserById(store, ride.userId, {
           title: "Driver accepted your ride",
           body: `${driver.name} accepted your request and is on the way.`,
@@ -1264,7 +1224,7 @@ const server = http.createServer(async (req, res) => {
         if (reassignmentResult.cancelled) {
           closeSharedRideRequestsForRide(store, ride.id, "closed");
         }
-        writeStore(store);
+        await writeStore(store);
         if (reassignmentResult.reassigned) {
           await notifyUserById(store, ride.userId, {
             title: "Driver updated",
@@ -1311,7 +1271,7 @@ const server = http.createServer(async (req, res) => {
       if (ride.status === BOOKING_STATUS.COMPLETED || ride.status === BOOKING_STATUS.CANCELLED) {
         closeSharedRideRequestsForRide(store, ride.id, "closed");
       }
-      writeStore(store);
+      await writeStore(store);
       if (ride.status === BOOKING_STATUS.IN_PROGRESS) {
         await notifyUserById(store, ride.userId, {
           title: "Ride started",
@@ -1343,6 +1303,16 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`Ghoomo backend listening on http://${HOST}:${PORT}`);
-});
+createStorage({ seedStore: DEFAULT_STORE })
+  .then((resolvedStorage) => {
+    storage = resolvedStorage;
+    server.listen(PORT, HOST, () => {
+      console.log(
+        `Ghoomo backend listening on http://${HOST}:${PORT} using ${resolvedStorage.mode} storage`
+      );
+    });
+  })
+  .catch((error) => {
+    console.error("Failed to initialize storage", error);
+    process.exit(1);
+  });
