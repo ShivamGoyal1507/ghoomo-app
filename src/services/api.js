@@ -29,20 +29,44 @@ export function getApiBaseUrl() {
 }
 
 async function request(path, options = {}) {
-  const response = await fetch(`${getApiBaseUrl()}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-    ...options,
-  });
+  const controller = new AbortController();
+  const timeoutMs = options.timeoutMs || 30000; // 30 second default timeout
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.message || "Request failed");
+  try {
+    const response = await fetch(`${getApiBaseUrl()}${path}`, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      },
+      ...options,
+      signal: controller.signal,
+    });
+
+    const payload = await response.json().catch((err) => {
+      console.error(`[API] JSON parse error for ${path}:`, err.message);
+      return {};
+    });
+
+    if (!response.ok) {
+      const errorMessage = payload.message || `HTTP ${response.status}: Request failed`;
+      console.error(`[API] Request failed ${path}:`, errorMessage);
+      throw new Error(errorMessage);
+    }
+
+    return payload;
+  } catch (error) {
+    if (error.name === "AbortError") {
+      const timeoutError = new Error(`Request timeout after ${timeoutMs}ms for ${path}`);
+      timeoutError.code = "TIMEOUT";
+      console.error(`[API] ${timeoutError.message}`);
+      throw timeoutError;
+    }
+    console.error(`[API] Network error for ${path}:`, error.message);
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  return payload;
 }
 
 export const api = {
@@ -75,6 +99,28 @@ export const api = {
     request("/api/bus-routes", {
       method: "POST",
       body: JSON.stringify(payload),
+    }),
+  getBusBookings: (params = {}) => {
+    const query = new URLSearchParams();
+    if (params.routeId) query.set("routeId", params.routeId);
+    if (params.userId) query.set("userId", params.userId);
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return request(`/api/bus-bookings${suffix}`);
+  },
+  createBusBooking: (payload) =>
+    request("/api/bus-bookings", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  cancelBusBooking: (bookingId) =>
+    request(`/api/bus-bookings/${bookingId}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  verifyBusBooking: (bookingId, verifiedBy) =>
+    request(`/api/bus-bookings/${bookingId}/verify`, {
+      method: "POST",
+      body: JSON.stringify({ verifiedBy }),
     }),
   searchPlaces: ({ query, latitude, longitude }) =>
     request(

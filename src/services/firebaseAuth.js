@@ -11,24 +11,69 @@ import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
 import { auth, db } from "./firebaseConfig";
 import * as Google from "expo-auth-session/providers/google";
 import * as WebBrowser from "expo-web-browser";
+import * as AuthSession from "expo-auth-session";
+import Constants from "expo-constants";
 
 // Set up web browser for OAuth
 WebBrowser.maybeCompleteAuthSession();
 
 // Google OAuth Configuration - configure platform-specific IDs in .env
-const legacyClientId = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID;
-const webClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || legacyClientId;
-const iosClientId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || legacyClientId;
-const androidClientId = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || legacyClientId;
-const expoClientId = process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID || legacyClientId;
+const DEFAULT_GOOGLE_CLIENT_ID =
+  "1024739915849-mfbsap813iku307ui69toqo4ljnlo5k3.apps.googleusercontent.com";
+
+function normalizeClientId(value) {
+  if (!value || typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+}
+
+const legacyClientId = normalizeClientId(process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID);
+const envWebClientId = normalizeClientId(process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID);
+const envIosClientId = normalizeClientId(process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID);
+const envAndroidClientId = normalizeClientId(process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID);
+const envExpoClientId = normalizeClientId(process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID);
+
+const baseClientId =
+  envWebClientId || envIosClientId || envAndroidClientId || envExpoClientId || legacyClientId;
+
+const webClientId = envWebClientId || baseClientId || DEFAULT_GOOGLE_CLIENT_ID;
+const iosClientId = envIosClientId || webClientId;
+const androidClientId = envAndroidClientId || webClientId;
+const expoClientId = envExpoClientId || webClientId;
+
+function getGoogleRedirectConfig() {
+  const isExpoGo =
+    Constants.appOwnership === "expo" ||
+    Constants.executionEnvironment === "storeClient";
+
+  // Expo Go must use proxy redirect URI.
+  const redirectUri = AuthSession.makeRedirectUri({
+    useProxy: isExpoGo,
+    scheme: "ghoomo",
+  });
+
+  return { isExpoGo, redirectUri };
+}
 
 // Must be called directly in component body (it is a React hook).
 export function useGoogleAuthRequest() {
+  const { isExpoGo, redirectUri } = getGoogleRedirectConfig();
+  console.log("[Google OAuth] Request config", {
+    isExpoGo,
+    redirectUri,
+    webClientId,
+    iosClientId,
+    androidClientId,
+    expoClientId,
+  });
+
   const [request, response, promptAsync] = Google.useAuthRequest({
     webClientId,
     iosClientId,
     androidClientId,
     expoClientId,
+    redirectUri,
+    responseType: "id_token",
     scopes: ["profile", "email"],
   });
 
@@ -41,17 +86,23 @@ export function useGoogleAuthRequest() {
 export async function signUpWithEmail(email, password, displayName, role = "user") {
   try {
     // Create user in Firebase Auth
+    console.log("[Firebase] Creating auth user for:", email);
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
+    console.log("[Firebase] Auth user created, UID:", user.uid);
 
     // Update display name
+    console.log("[Firebase] Updating profile for:", user.uid);
     await updateProfile(user, {
       displayName: displayName,
       photoURL: null,
     });
+    console.log("[Firebase] Profile updated");
 
-    // Create user document in Firestore with role and profile info
-    await setDoc(doc(db, "users", user.uid), {
+    // Create user document in Firestore with role and profile info (with 10s timeout)
+    console.log("[Firebase] Creating Firestore user document (10s timeout)");
+    
+    const firestorePromise = setDoc(doc(db, "users", user.uid), {
       uid: user.uid,
       email: user.email,
       displayName: displayName,
@@ -65,6 +116,22 @@ export async function signUpWithEmail(email, password, displayName, role = "user
       isActive: true,
     });
 
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(
+        () => reject(new Error("Firestore write timeout after 10s")),
+        10000
+      )
+    );
+
+    try {
+      await Promise.race([firestorePromise, timeoutPromise]);
+      console.log("[Firebase] Firestore user document created");
+    } catch (firestoreError) {
+      console.error("[Firebase] Firestore write warning (non-blocking):", firestoreError.message);
+      console.log("[Firebase] Continuing with backend registration...");
+      // Non-blocking failure - continue to backend registration
+    }
+
     return {
       success: true,
       user: {
@@ -75,6 +142,7 @@ export async function signUpWithEmail(email, password, displayName, role = "user
       },
     };
   } catch (error) {
+    console.error("[Firebase] Sign up error:", error.message, error.code);
     return {
       success: false,
       error: error.message,
@@ -122,7 +190,20 @@ export async function handleGoogleSignIn(promptAsync, selectedRole = "user") {
     }
 
     // Prompt user to select Google account
-    const result = await promptAsync();
+    const { isExpoGo } = getGoogleRedirectConfig();
+    const result = await promptAsync({
+      useProxy: isExpoGo,
+      showInRecents: true,
+    });
+
+    if (result?.params?.error) {
+      const providerError = `${result.params.error}: ${result.params.error_description || "OAuth request failed"}`;
+      console.error("[Google OAuth] Provider error", result.params);
+      return {
+        success: false,
+        error: providerError,
+      };
+    }
 
     if (result?.type !== "success") {
       return {

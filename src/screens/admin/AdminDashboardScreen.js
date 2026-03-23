@@ -16,9 +16,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { logoutUser } from "../../store/slices/authSlice";
 import { fetchAdminDashboard } from "../../store/slices/adminSlice";
 import { fetchBusRoutes } from "../../store/slices/busRoutesSlice";
+import { fetchBusBookings, setBusBookings } from "../../store/slices/bookingSlice";
 import Card from "../../components/common/Card";
 import Badge from "../../components/common/Badge";
 import { BOOKING_STATUS, COLORS, SPACING } from "../../constants";
+import { subscribeBusRealtime } from "../../services/realtime";
 
 const { width } = Dimensions.get("window");
 
@@ -122,6 +124,20 @@ export default function AdminDashboardScreen({ navigation }) {
   useEffect(() => {
     dispatch(fetchAdminDashboard()).catch(() => {});
     dispatch(fetchBusRoutes()).catch(() => {});
+    dispatch(fetchBusBookings()).catch(() => {});
+  }, [dispatch]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeBusRealtime({
+      onBusUpdate: ({ busBookings }) => {
+        dispatch(setBusBookings(busBookings || []));
+      },
+      onError: () => {
+        dispatch(fetchBusBookings()).catch(() => {});
+      },
+    });
+
+    return () => unsubscribe();
   }, [dispatch]);
 
   const onRefresh = async () => {

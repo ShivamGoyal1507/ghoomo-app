@@ -7,12 +7,13 @@ import { useDispatch, useSelector } from "react-redux";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { logoutUser } from "../../store/slices/authSlice";
 import { fetchBusRoutes } from "../../store/slices/busRoutesSlice";
-import { verifyBusTicket } from "../../store/slices/bookingSlice";
+import { fetchBusBookings, setBusBookings, verifyBusTicketRemote } from "../../store/slices/bookingSlice";
 import Card from "../../components/common/Card";
 import Badge from "../../components/common/Badge";
 import { COLORS, SPACING } from "../../constants";
 import { getBookingWindow } from "../../utils/bus";
 import { sendLocalNotification } from "../../services/notifications";
+import { subscribeBusRealtime } from "../../services/realtime";
 
 export default function BusDriverRouteScreen({ route, navigation }) {
   const dispatch = useDispatch();
@@ -24,10 +25,25 @@ export default function BusDriverRouteScreen({ route, navigation }) {
   const [scanResult, setScanResult] = useState(null);
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
-  const [bookingIdInput, setBookingIdInput] = useState("");
+  const [passengerNameInput, setPassengerNameInput] = useState("");
+  const [selectedPassengerBookingId, setSelectedPassengerBookingId] = useState(null);
 
   useEffect(() => {
     dispatch(fetchBusRoutes()).catch(() => {});
+    dispatch(fetchBusBookings()).catch(() => {});
+  }, [dispatch]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeBusRealtime({
+      onBusUpdate: ({ busBookings }) => {
+        dispatch(setBusBookings(busBookings || []));
+      },
+      onError: () => {
+        dispatch(fetchBusBookings()).catch(() => {});
+      },
+    });
+
+    return () => unsubscribe();
   }, [dispatch]);
 
   useEffect(() => {
@@ -66,7 +82,41 @@ export default function BusDriverRouteScreen({ route, navigation }) {
   const verifiedCount = routeBookings.filter(b => b.verified).length;
   const todayPassengers = routeBookings.length;
 
-  const verifyQR = (qrString) => {
+  const matchingPassengers = useMemo(() => {
+    const normalizedName = String(passengerNameInput || "").trim().toLowerCase();
+    if (!normalizedName) return [];
+
+    return routeBookings.filter((booking) =>
+      String(booking.userName || "").trim().toLowerCase().includes(normalizedName)
+    );
+  }, [passengerNameInput, routeBookings]);
+
+  const selectedMatchingPassenger = useMemo(
+    () => matchingPassengers.find((booking) => booking.id === selectedPassengerBookingId) || null,
+    [matchingPassengers, selectedPassengerBookingId]
+  );
+
+  const canVerifyByName =
+    passengerNameInput.trim().length > 0 &&
+    (matchingPassengers.length === 1 || Boolean(selectedMatchingPassenger));
+
+  useEffect(() => {
+    if (!passengerNameInput.trim()) {
+      setSelectedPassengerBookingId(null);
+      return;
+    }
+
+    if (matchingPassengers.length === 1) {
+      setSelectedPassengerBookingId(matchingPassengers[0].id);
+      return;
+    }
+
+    if (!matchingPassengers.some((booking) => booking.id === selectedPassengerBookingId)) {
+      setSelectedPassengerBookingId(null);
+    }
+  }, [passengerNameInput, matchingPassengers, selectedPassengerBookingId]);
+
+  const verifyQR = async (qrString) => {
     try {
       let data;
       if (typeof qrString === "string") {
@@ -107,7 +157,7 @@ export default function BusDriverRouteScreen({ route, navigation }) {
           return;
         }
 
-        dispatch(verifyBusTicket({ bookingId: booking.id, verifiedBy: user?.id || "bus_driver" }));
+        await dispatch(verifyBusTicketRemote(booking.id, user?.id || "bus_driver"));
         sendLocalNotification({
           key: `ticket-verified-${booking.id}`,
           title: "Ticket verified",
@@ -120,7 +170,7 @@ export default function BusDriverRouteScreen({ route, navigation }) {
           data,
           message: "Ticket verified successfully.",
         });
-        setBookingIdInput("");
+        setPassengerNameInput("");
       } else {
         setScanResult({ valid: false, message: "Invalid or expired QR code" });
       }
@@ -175,14 +225,16 @@ export default function BusDriverRouteScreen({ route, navigation }) {
           <Text style={styles.sectionTitle}>Verify Passenger Ticket</Text>
           <Card elevated>
             <Text style={styles.scanInstructions}>
-              Selected route: {selectedRoute.name}. Scan the QR code or enter the Booking ID to verify instantly.
+              Selected route: {selectedRoute.name}. Scan the QR code or enter passenger name, then select the passenger to verify.
             </Text>
             {permission && permission.granted ? (
               <View style={styles.cameraWrap}>
                 <CameraView
                   onBarcodeScanned={scanned ? undefined : ({ data }) => {
                     setScanned(true);
-                    verifyQR(data);
+                    verifyQR(data).catch((error) => {
+                      setScanResult({ valid: false, message: error.message || "Verification failed" });
+                    });
                   }}
                   style={StyleSheet.absoluteFillObject}
                   barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
@@ -203,28 +255,97 @@ export default function BusDriverRouteScreen({ route, navigation }) {
 
             <View style={styles.manualRow}>
               <TextInput
-                value={bookingIdInput}
-                onChangeText={setBookingIdInput}
-                placeholder="Enter Booking ID (e.g. bus_...)"
+                value={passengerNameInput}
+                onChangeText={(value) => {
+                  setPassengerNameInput(value);
+                  setScanResult(null);
+                }}
+                placeholder="Enter passenger name"
                 placeholderTextColor={COLORS.gray}
                 style={styles.manualInput}
-                autoCapitalize="none"
+                autoCapitalize="words"
                 autoCorrect={false}
               />
               <TouchableOpacity
-                style={[styles.verifyBtn, !bookingIdInput.trim() && styles.verifyBtnDisabled]}
+                style={[styles.verifyBtn, !canVerifyByName && styles.verifyBtnDisabled]}
                 onPress={() => {
-                  const id = bookingIdInput.trim();
-                  if (!id) return;
+                  if (!passengerNameInput.trim()) {
+                    setScanResult({ valid: false, message: "Please enter passenger name" });
+                    return;
+                  }
+
+                  if (matchingPassengers.length === 0) {
+                    setScanResult({ valid: false, message: "No active booking found for this passenger on selected route." });
+                    return;
+                  }
+
+                  if (matchingPassengers.length > 1 && !selectedMatchingPassenger) {
+                    setScanResult({ valid: false, message: "Select a passenger from the matches to verify." });
+                    return;
+                  }
+
+                  const booking = matchingPassengers.length === 1
+                    ? matchingPassengers[0]
+                    : selectedMatchingPassenger;
+
+                  if (!booking) {
+                    setScanResult({ valid: false, message: "Unable to find booking" });
+                    return;
+                  }
+
                   setScanned(true);
-                  verifyQR(id);
+                  verifyQR({
+                    bookingId: booking.id,
+                    busId: booking.routeId,
+                    userId: booking.userId,
+                    seatNo: booking.seatNumber,
+                  }).catch((error) => {
+                    setScanResult({ valid: false, message: error.message || "Verification failed" });
+                  });
                 }}
-                disabled={!bookingIdInput.trim()}
+                disabled={!canVerifyByName}
               >
                 <Ionicons name="checkmark-circle" size={18} color={COLORS.white} />
                 <Text style={styles.verifyBtnText}>Verify</Text>
               </TouchableOpacity>
             </View>
+
+            {passengerNameInput.trim().length > 0 ? (
+              <View style={styles.matchPickerWrap}>
+                {matchingPassengers.length === 0 ? (
+                  <Text style={styles.matchPickerEmpty}>No matching passenger found.</Text>
+                ) : matchingPassengers.length === 1 ? (
+                  <Text style={styles.matchPickerHint}>1 matching passenger found. Tap Verify to continue.</Text>
+                ) : (
+                  <>
+                    <Text style={styles.matchPickerHint}>Select passenger ({matchingPassengers.length} matches):</Text>
+                    {matchingPassengers.map((booking) => {
+                      const isSelected = selectedPassengerBookingId === booking.id;
+                      return (
+                        <TouchableOpacity
+                          key={booking.id}
+                          style={[styles.matchOption, isSelected && styles.matchOptionSelected]}
+                          onPress={() => setSelectedPassengerBookingId(booking.id)}
+                        >
+                          <View style={styles.matchOptionInfo}>
+                            <Text style={styles.matchOptionName}>{booking.userName}</Text>
+                            <Text style={styles.matchOptionMeta}>
+                              {booking.isWaiting ? `WL ${booking.waitlistPosition}` : `Seat ${booking.seatNumber}`}
+                              {booking.verified ? " • Verified" : ""}
+                            </Text>
+                          </View>
+                          <Ionicons
+                            name={isSelected ? "radio-button-on" : "radio-button-off"}
+                            size={18}
+                            color={isSelected ? COLORS.primary : COLORS.gray}
+                          />
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </>
+                )}
+              </View>
+            ) : null}
 
             {scanned ? (
               <TouchableOpacity
@@ -365,6 +486,34 @@ const styles = StyleSheet.create({
   },
   verifyBtnDisabled: { opacity: 0.5 },
   verifyBtnText: { fontSize: 13, fontWeight: "800", color: COLORS.white },
+  matchPickerWrap: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 12,
+    backgroundColor: COLORS.white,
+  },
+  matchPickerHint: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 8, fontWeight: "600" },
+  matchPickerEmpty: { fontSize: 12, color: COLORS.textSecondary, fontStyle: "italic" },
+  matchOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    marginTop: 8,
+  },
+  matchOptionSelected: {
+    borderColor: COLORS.primary,
+    backgroundColor: `${COLORS.primary}10`,
+  },
+  matchOptionInfo: { flex: 1, marginRight: 8 },
+  matchOptionName: { fontSize: 13, fontWeight: "700", color: COLORS.text },
+  matchOptionMeta: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
   scanAgainBtn: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 10, justifyContent: "center", borderRadius: 10, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.white, marginBottom: 12 },
   scanAgainText: { fontSize: 13, fontWeight: "700", color: COLORS.primary },
   scanResult: { borderRadius: 12, padding: 14, flexDirection: "row", alignItems: "flex-start", gap: 12 },

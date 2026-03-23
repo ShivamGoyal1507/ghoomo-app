@@ -4,12 +4,13 @@ import { View, Text, StyleSheet, TouchableOpacity, Alert, Linking } from "react-
 import { Ionicons } from "@expo/vector-icons";
 import { useDispatch, useSelector } from "react-redux";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { refreshActiveRide, syncRideStatus } from "../../store/slices/bookingSlice";
+import { finalizeBooking, refreshActiveRide, setActiveBooking, syncRideStatus } from "../../store/slices/bookingSlice";
 import { COLORS, SPACING, BOOKING_STATUS } from "../../constants";
 import Card from "../../components/common/Card";
 import Button from "../../components/common/Button";
 import OsmRouteMap from "../../components/map/OsmRouteMap";
 import { api } from "../../services/api";
+import { subscribeRideRealtime } from "../../services/realtime";
 
 const STATUS_STEPS = [
   { key: BOOKING_STATUS.PENDING, label: "Waiting For Driver", icon: "time", color: "#F59E0B" },
@@ -23,42 +24,78 @@ export default function RideTrackingScreen({ navigation }) {
   const dispatch = useDispatch();
   const booking = useSelector(s => s.booking.activeBooking);
   const lastBookingRef = useRef(null);
+  const isRedirectingRef = useRef(false);
   const [sharedRequest, setSharedRequest] = useState(null);
+
+  const goHomeFast = () => {
+    if (isRedirectingRef.current) return;
+    isRedirectingRef.current = true;
+    navigation.reset({
+      index: 0,
+      routes: [{ name: "UserHome" }],
+    });
+  };
 
   useEffect(() => {
     if (booking) {
       lastBookingRef.current = booking;
+      if (booking.status === BOOKING_STATUS.COMPLETED || booking.status === BOOKING_STATUS.CANCELLED) {
+        goHomeFast();
+      }
       return;
     }
 
     const lastBooking = lastBookingRef.current;
-    if (!lastBooking) return;
+    if (!lastBooking) {
+      goHomeFast();
+      return;
+    }
 
     if (lastBooking.status === BOOKING_STATUS.COMPLETED) {
-      navigation.navigate("History");
+      goHomeFast();
       return;
     }
 
     if (lastBooking.status === BOOKING_STATUS.CANCELLED) {
-      navigation.navigate("Home", { screen: "UserHome" });
+      goHomeFast();
     }
   }, [booking, navigation]);
 
   useEffect(() => {
     if (!booking?.id) return undefined;
 
-    dispatch(refreshActiveRide(booking.id)).catch(() => {});
+    const refresh = () => dispatch(refreshActiveRide(booking.id)).catch(() => {});
+    refresh();
+
+    const unsubscribeRealtime = subscribeRideRealtime(booking.id, {
+      onRideUpdate: (ride) => {
+        if (ride.status === BOOKING_STATUS.COMPLETED || ride.status === BOOKING_STATUS.CANCELLED) {
+          goHomeFast();
+          dispatch(finalizeBooking(ride));
+          return;
+        }
+        dispatch(setActiveBooking(ride));
+      },
+      onError: () => {
+        // Fallback refresh on socket issues.
+        refresh();
+      },
+    });
+
     api.getSharedRideByRide(booking.id)
       .then(({ request }) => setSharedRequest(request))
       .catch(() => setSharedRequest(null));
+
     const intervalId = setInterval(() => {
-      dispatch(refreshActiveRide(booking.id)).catch(() => {});
       api.getSharedRideByRide(booking.id)
         .then(({ request }) => setSharedRequest(request))
         .catch(() => setSharedRequest(null));
     }, 7000);
 
-    return () => clearInterval(intervalId);
+    return () => {
+      unsubscribeRealtime();
+      clearInterval(intervalId);
+    };
   }, [booking?.id, dispatch]);
 
   if (!booking) return (
@@ -66,7 +103,7 @@ export default function RideTrackingScreen({ navigation }) {
       <View style={styles.emptyState}>
         <Ionicons name="car-outline" size={42} color={COLORS.gray} />
         <Text style={styles.emptyTitle}>Ride status updated</Text>
-        <Text style={styles.emptyText}>Redirecting to your latest trip details.</Text>
+        <Text style={styles.emptyText}>Redirecting to Home...</Text>
       </View>
     </SafeAreaView>
   );

@@ -7,8 +7,10 @@ import { useDispatch, useSelector } from "react-redux";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { logoutUser } from "../../store/slices/authSlice";
 import { fetchBusRoutes } from "../../store/slices/busRoutesSlice";
+import { fetchBusBookings, setBusBookings } from "../../store/slices/bookingSlice";
 import { COLORS, SPACING } from "../../constants";
 import { getBookingWindow } from "../../utils/bus";
+import { subscribeBusRealtime } from "../../services/realtime";
 
 export default function BusDriverScreen({ navigation }) {
   const dispatch = useDispatch();
@@ -20,6 +22,19 @@ export default function BusDriverScreen({ navigation }) {
 
   useEffect(() => {
     dispatch(fetchBusRoutes()).catch(() => {});
+    dispatch(fetchBusBookings()).catch(() => {});
+  }, [dispatch]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeBusRealtime({
+      onBusUpdate: ({ busBookings }) => {
+        dispatch(setBusBookings(busBookings || []));
+      },
+      onError: () => {
+        dispatch(fetchBusBookings()).catch(() => {});
+      },
+    });
+    return () => unsubscribe();
   }, [dispatch]);
 
   useEffect(() => {

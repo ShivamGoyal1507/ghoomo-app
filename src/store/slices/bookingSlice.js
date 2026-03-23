@@ -200,6 +200,9 @@ const bookingSlice = createSlice({
     setHistory: (state, action) => {
       state.bookingHistory = [...action.payload, ...state.bookingHistory.filter((item) => item.type === "bus")];
     },
+    setBusBookings: (state, action) => {
+      state.busBookings = Array.isArray(action.payload) ? action.payload : [];
+    },
   },
 });
 
@@ -215,6 +218,7 @@ export const {
   verifyBusTicket,
   cancelActiveBooking,
   setHistory,
+  setBusBookings,
 } = bookingSlice.actions;
 
 export const fetchRideQuote = (payload) => async (dispatch) => {
@@ -225,6 +229,57 @@ export const fetchRideQuote = (payload) => async (dispatch) => {
     return { pickup, drop, route, estimate, driver, availability };
   } catch (error) {
     dispatch(requestFailure(error.message || "Unable to fetch ride quote"));
+    throw error;
+  }
+};
+
+export const fetchBusBookings = (params = {}) => async (dispatch) => {
+  try {
+    const { busBookings } = await api.getBusBookings(params);
+    dispatch(setBusBookings(busBookings || []));
+    return busBookings || [];
+  } catch (error) {
+    dispatch(requestFailure(error.message || "Unable to load bus bookings"));
+    throw error;
+  }
+};
+
+export const createBusSeatBooking = (payload) => async (dispatch) => {
+  dispatch(requestStart());
+  try {
+    const { booking } = await api.createBusBooking(payload);
+    const { busBookings } = await api.getBusBookings();
+    dispatch(setBusBookings(busBookings || []));
+    dispatch(setQuote(null));
+    return booking;
+  } catch (error) {
+    dispatch(requestFailure(error.message || "Unable to create bus booking"));
+    throw error;
+  }
+};
+
+export const cancelBusSeatBooking = (bookingId) => async (dispatch) => {
+  dispatch(requestStart());
+  try {
+    await api.cancelBusBooking(bookingId);
+    const { busBookings } = await api.getBusBookings();
+    dispatch(setBusBookings(busBookings || []));
+    return true;
+  } catch (error) {
+    dispatch(requestFailure(error.message || "Unable to cancel bus booking"));
+    throw error;
+  }
+};
+
+export const verifyBusTicketRemote = (bookingId, verifiedBy) => async (dispatch) => {
+  dispatch(requestStart());
+  try {
+    await api.verifyBusBooking(bookingId, verifiedBy);
+    const { busBookings } = await api.getBusBookings();
+    dispatch(setBusBookings(busBookings || []));
+    return true;
+  } catch (error) {
+    dispatch(requestFailure(error.message || "Unable to verify bus ticket"));
     throw error;
   }
 };

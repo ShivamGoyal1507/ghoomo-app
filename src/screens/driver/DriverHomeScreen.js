@@ -9,7 +9,6 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
-  TextInput,
   KeyboardAvoidingView,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
@@ -32,21 +31,17 @@ import { COLORS, SPACING, BOOKING_STATUS } from "../../constants";
 import { ensureDriverBackgroundLocation, stopDriverBackgroundLocation } from "../../services/backgroundLocation";
 import { api } from "../../services/api";
 
-export default function DriverHomeScreen() {
+export default function DriverHomeScreen({ navigation }) {
   const dispatch = useDispatch();
   const user = useSelector((state) => state.auth.user);
   const { dashboard, loading, error } = useSelector((state) => state.driver);
   const watchSubscriptionRef = useRef(null);
-  const otpInputRef = useRef(null);
-  const [enteredOtp, setEnteredOtp] = useState("");
-  const [isOtpFocused, setIsOtpFocused] = useState(false);
   const [sharedRequest, setSharedRequest] = useState(null);
 
   useEffect(() => {
     if (!user?.id) return undefined;
 
     dispatch(fetchDriverDashboard(user.id)).catch(() => {});
-    if (isOtpFocused) return undefined;
     const intervalId = setInterval(() => {
       dispatch(fetchDriverDashboard(user.id)).catch(() => {});
     }, 10000);
@@ -54,7 +49,7 @@ export default function DriverHomeScreen() {
     return () => {
       clearInterval(intervalId);
     };
-  }, [dispatch, isOtpFocused, user?.id]);
+  }, [dispatch, user?.id]);
 
   useEffect(() => {
     let mounted = true;
@@ -90,7 +85,6 @@ export default function DriverHomeScreen() {
           timeInterval: 7000,
         },
         (position) => {
-          if (isOtpFocused) return;
           dispatch(
             updateDriverLocation(user.id, {
               latitude: position.coords.latitude,
@@ -116,7 +110,7 @@ export default function DriverHomeScreen() {
         watchSubscriptionRef.current = null;
       }
     };
-  }, [dashboard?.online, dispatch, isOtpFocused, user?.id]);
+  }, [dashboard?.online, dispatch, user?.id]);
 
   const handleToggleOnline = (nextValue) => {
     if (!nextValue) {
@@ -140,15 +134,17 @@ export default function DriverHomeScreen() {
     });
   };
 
-  const activeRide = dashboard?.activeRide || null;
   const assignedRides = dashboard?.assignedRides || [];
+  const activeRide =
+    dashboard?.activeRide ||
+    assignedRides.find((ride) => ride.status === BOOKING_STATUS.IN_PROGRESS) ||
+    assignedRides.find((ride) => ride.status === BOOKING_STATUS.ARRIVED) ||
+    assignedRides.find((ride) => ride.status === BOOKING_STATUS.ACCEPTED) ||
+    null;
   const completedRides = dashboard?.completedRides || [];
+  const driverProfile = dashboard?.driver || user || {};
   const stats = dashboard?.stats || { todayEarnings: 0, ridesToday: 0, rating: user?.rating || 0 };
   const isOnline = Boolean(dashboard?.online ?? user?.online);
-
-  useEffect(() => {
-    setEnteredOtp("");
-  }, [activeRide?.id]);
 
   useEffect(() => {
     if (!activeRide?.id || !activeRide?.isShare) {
@@ -169,14 +165,6 @@ export default function DriverHomeScreen() {
     return () => clearInterval(intervalId);
   }, [activeRide?.id, activeRide?.isShare]);
 
-  useEffect(() => {
-    if (activeRide?.status !== BOOKING_STATUS.ACCEPTED) return;
-    const timeoutId = setTimeout(() => {
-      otpInputRef.current?.focus?.();
-    }, 200);
-    return () => clearTimeout(timeoutId);
-  }, [activeRide?.id, activeRide?.status]);
-
   const handleRejectRide = (rideId) => {
     Alert.alert("Reject Ride", "This ride will be reassigned to the next nearest driver if one is available.", [
       { text: "Keep Ride", style: "cancel" },
@@ -191,6 +179,15 @@ export default function DriverHomeScreen() {
           }),
       },
     ]);
+  };
+
+  const handleMarkArrived = async (rideId) => {
+    try {
+      await dispatch(driverUpdateRideStatus(user.id, rideId, BOOKING_STATUS.ARRIVED));
+      navigation.getParent()?.navigate("DriverOtp", { rideId });
+    } catch (rideError) {
+      Alert.alert("Ride Update Failed", rideError.message);
+    }
   };
 
   return (
@@ -211,7 +208,7 @@ export default function DriverHomeScreen() {
               <Text style={styles.driverName}>{user?.name}</Text>
               <View style={styles.ratingRow}>
                 <Ionicons name="star" size={14} color="#F59E0B" />
-                <Text style={styles.rating}>{stats.rating || user?.rating || 0} • {user?.vehicleType}</Text>
+                <Text style={styles.rating}>{stats.rating || driverProfile?.rating || user?.rating || 0} • {driverProfile?.vehicleType || user?.vehicleType || "driver"}</Text>
               </View>
               {dashboard?.location ? (
                 <Text style={styles.locationText}>
@@ -267,15 +264,15 @@ export default function DriverHomeScreen() {
             <View style={styles.vehicleRow}>
               <View style={styles.vehicleIcon}>
                 <Ionicons
-                  name={user?.vehicleType === "bike" ? "bicycle" : user?.vehicleType === "auto" ? "car-sport" : "car"}
+                  name={driverProfile?.vehicleType === "bike" ? "bicycle" : driverProfile?.vehicleType === "auto" ? "car-sport" : "car"}
                   size={26}
                   color={COLORS.primary}
                 />
               </View>
               <View style={styles.vehicleInfo}>
-                <Text style={styles.vehicleNo}>{user?.vehicleNo || "Vehicle unavailable"}</Text>
+                <Text style={styles.vehicleNo}>{driverProfile?.vehicleNo || "Vehicle unavailable"}</Text>
                 <Text style={styles.vehicleType}>
-                  {(user?.vehicleType || "driver").charAt(0).toUpperCase() + (user?.vehicleType || "driver").slice(1)}
+                  {(driverProfile?.vehicleType || "driver").charAt(0).toUpperCase() + (driverProfile?.vehicleType || "driver").slice(1)}
                 </Text>
               </View>
               <Badge status={isOnline ? "accepted" : "pending"} label={isOnline ? "Online" : "Offline"} />
@@ -339,7 +336,7 @@ export default function DriverHomeScreen() {
                     <View style={styles.otpStartWrap}>
                       <Button
                         title="Mark Arrived"
-                        onPress={() => handleRideAction(activeRide.id, BOOKING_STATUS.ARRIVED)}
+                        onPress={() => handleMarkArrived(activeRide.id)}
                         variant="primary"
                         style={{ flex: 1 }}
                       />
@@ -353,50 +350,16 @@ export default function DriverHomeScreen() {
                     </View>
                   ) : null}
                   {activeRide.status === BOOKING_STATUS.ARRIVED ? (
-                    <View style={styles.otpStartWrap}>
-                      <View style={styles.otpFieldWrap}>
-                        <Text style={styles.otpLabel}>Enter Rider OTP</Text>
-                        <TextInput
-                          ref={otpInputRef}
-                          style={styles.otpField}
-                          placeholder="Enter 4-digit OTP"
-                          placeholderTextColor={COLORS.gray}
-                          value={enteredOtp}
-                          onChangeText={(value) => setEnteredOtp(value.replace(/[^0-9]/g, "").slice(0, 4))}
-                          keyboardType={Platform.OS === "android" ? "numeric" : "number-pad"}
-                          maxLength={4}
-                          returnKeyType="done"
-                          autoCorrect={false}
-                          autoCapitalize="none"
-                          textContentType="oneTimeCode"
-                          importantForAutofill="yes"
-                          selectTextOnFocus
-                          showSoftInputOnFocus
-                          onFocus={() => setIsOtpFocused(true)}
-                          onBlur={() => setIsOtpFocused(false)}
-                        />
-                      </View>
-                      <Button
-                        title="Verify OTP & Start"
-                        onPress={() => {
-                          otpInputRef.current?.blur?.();
-                          handleRideAction(activeRide.id, BOOKING_STATUS.IN_PROGRESS, { otp: enteredOtp });
-                        }}
-                        variant="success"
-                        style={{ flex: 1 }}
-                        disabled={enteredOtp.trim().length < 4}
-                      />
-                      <Button
-                        title="Need Help"
-                        onPress={() => Alert.alert("Support", "Ask rider to share the correct OTP. You can start only after OTP verification.")}
-                        variant="outline"
-                        style={{ flex: 1 }}
-                      />
-                    </View>
+                    <Button
+                      title="Open OTP Page"
+                      onPress={() => navigation.getParent()?.navigate("DriverOtp", { rideId: activeRide.id })}
+                      variant="primary"
+                      style={{ flex: 1 }}
+                    />
                   ) : null}
                   {activeRide.status === BOOKING_STATUS.IN_PROGRESS ? (
                     <Button
-                      title="Complete Ride"
+                      title="Reached"
                       onPress={() => handleRideAction(activeRide.id, BOOKING_STATUS.COMPLETED)}
                       variant="success"
                       style={{ flex: 1 }}
@@ -539,20 +502,6 @@ const styles = StyleSheet.create({
   sharedPassengersMeta: { marginTop: 8, fontSize: 12, fontWeight: "700", color: COLORS.primary },
   actionRow: { flexDirection: "row", gap: 10, marginTop: 8 },
   otpStartWrap: { flex: 1, gap: 10 },
-  otpFieldWrap: { gap: 6 },
-  otpLabel: { fontSize: 13, fontWeight: "700", color: COLORS.text },
-  otpField: {
-    borderWidth: 1.5,
-    borderColor: COLORS.primary,
-    backgroundColor: COLORS.white,
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: Platform.OS === "android" ? 12 : 14,
-    fontSize: 22,
-    fontWeight: "800",
-    letterSpacing: 10,
-    color: COLORS.text,
-  },
   noRequests: { alignItems: "center", paddingVertical: SPACING.xl },
   noRequestsText: { fontSize: 14, color: COLORS.textSecondary, marginTop: 10, textAlign: "center" },
   rideCard: { marginBottom: SPACING.sm },

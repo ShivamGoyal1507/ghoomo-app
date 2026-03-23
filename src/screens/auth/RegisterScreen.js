@@ -65,7 +65,7 @@ function SimpleField({
 
 export default function RegisterScreen({ navigation }) {
   const dispatch = useDispatch();
-  const { loading, error } = useSelector(s => s.auth);
+  const { loading, error, isAuthenticated, user } = useSelector(s => s.auth);
   const liveRoutes = useSelector((state) => state.busRoutes.routes);
   const availableRoutes = liveRoutes;
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -94,6 +94,27 @@ export default function RegisterScreen({ navigation }) {
   useEffect(() => {
     dispatch(fetchBusRoutes()).catch(() => {});
   }, [dispatch]);
+
+  // Watch for auth state changes for debugging
+  useEffect(() => {
+    console.log("[RegisterScreen] Auth state updated - isAuthenticated:", isAuthenticated, "user:", user?.email, "loading:", loading, "error:", error);
+    if (error) {
+      console.log("[RegisterScreen] Registration error:", error);
+      Alert.alert("Registration Failed", error);
+    }
+  }, [isAuthenticated, user, loading, error]);
+
+  // Explicitly watch for successful registration
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      console.log("[RegisterScreen] ✓ SUCCESS: User authenticated, navigating to role page. User:", {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        name: user.name,
+      });
+    }
+  }, [isAuthenticated, user?.id]);
 
   const handleGoogleSignUp = async () => {
     if (!promptAsync) {

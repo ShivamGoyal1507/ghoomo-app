@@ -12,6 +12,7 @@ export default function DriverProfileScreen() {
   const dispatch = useDispatch();
   const user = useSelector((state) => state.auth.user);
   const dashboard = useSelector((state) => state.driver.dashboard);
+  const driverProfile = dashboard?.driver || user || {};
 
   const stats = useMemo(() => {
     const completed = dashboard?.completedRides || [];
@@ -34,9 +35,9 @@ export default function DriverProfileScreen() {
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>{user?.name?.[0]?.toUpperCase()}</Text>
           </View>
-          <Text style={styles.name}>{user?.name}</Text>
-          <Text style={styles.sub}>{user?.email}</Text>
-          <Text style={styles.meta}>{user?.phone || "Phone not available"}</Text>
+          <Text style={styles.name}>{driverProfile?.name || user?.name}</Text>
+          <Text style={styles.sub}>{driverProfile?.email || user?.email}</Text>
+          <Text style={styles.meta}>{driverProfile?.phone || user?.phone || "Phone not available"}</Text>
           <View style={styles.statsRow}>
             <View style={styles.stat}>
               <Text style={styles.statVal}>{stats.completedCount}</Text>
@@ -60,17 +61,17 @@ export default function DriverProfileScreen() {
           <Card elevated>
             <View style={styles.infoRow}>
               <Ionicons name="car-sport" size={18} color={COLORS.primary} />
-              <Text style={styles.infoText}>{user?.vehicleNo || "Vehicle not set"}</Text>
+              <Text style={styles.infoText}>{driverProfile?.vehicleNo || "Vehicle not set"}</Text>
             </View>
             <View style={styles.divider} />
             <View style={styles.infoRow}>
               <Ionicons name="speedometer" size={18} color={COLORS.success} />
-              <Text style={styles.infoText}>{(user?.vehicleType || "driver").toUpperCase()}</Text>
+              <Text style={styles.infoText}>{(driverProfile?.vehicleType || "driver").toUpperCase()}</Text>
             </View>
             <View style={styles.divider} />
             <View style={styles.infoRow}>
               <Ionicons name="star" size={18} color="#F59E0B" />
-              <Text style={styles.infoText}>{user?.rating || 0} rating</Text>
+              <Text style={styles.infoText}>{driverProfile?.rating || user?.rating || 0} rating</Text>
             </View>
           </Card>
         </View>

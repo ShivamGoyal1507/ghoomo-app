@@ -3,25 +3,23 @@ import Constants from "expo-constants";
 import { api } from "./api";
 
 let Notifications = null;
-const isExpoGo =
-  Constants.appOwnership === "expo" ||
-  Constants.executionEnvironment === "storeClient";
 
-if (!isExpoGo) {
-  try {
-    Notifications = require("expo-notifications");
-    Notifications.setNotificationHandler({
-      handleNotification: async () => ({
-        shouldShowAlert: true,
-        shouldPlaySound: true,
-        shouldSetBadge: false,
-        shouldShowBanner: true,
-        shouldShowList: true,
-      }),
-    });
-  } catch (_error) {
-    Notifications = null;
-  }
+// Always try to load Notifications, works in both Expo Go and production
+try {
+  Notifications = require("expo-notifications");
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
+  console.log("[Notifications] Initialized successfully");
+} catch (error) {
+  console.warn("[Notifications] Failed to initialize:", error.message);
+  Notifications = null;
 }
 
 const sentKeys = new Set();
@@ -63,21 +61,49 @@ function getExpoProjectId() {
 }
 
 export async function registerPushTokenForUser(userId) {
-  if (!Notifications || !userId) return null;
+  if (!Notifications || !userId) {
+    console.log("[Notifications] Skipping push token registration - Notifications or userId missing");
+    return null;
+  }
 
-  const granted = await initializeNotifications();
-  if (!granted) return null;
+  try {
+    console.log("[Notifications] Initializing notifications for user:", userId);
+    const granted = await initializeNotifications();
+    if (!granted) {
+      console.warn("[Notifications] Notification permission not granted");
+      return null;
+    }
 
-  const projectId = getExpoProjectId();
-  if (!projectId) return null;
+    const projectId = getExpoProjectId();
+    if (!projectId) {
+      console.warn("[Notifications] No Expo project ID configured");
+      return null;
+    }
 
-  const tokenResponse = await Notifications.getExpoPushTokenAsync({ projectId });
-  const token = tokenResponse?.data || null;
-  if (!token || token === registeredPushToken) return token;
+    console.log("[Notifications] Fetching push token");
+    const tokenResponse = await Notifications.getExpoPushTokenAsync({ projectId });
+    const token = tokenResponse?.data || null;
+    
+    if (!token) {
+      console.warn("[Notifications] Failed to get push token");
+      return null;
+    }
 
-  await api.registerPushToken(userId, token);
-  registeredPushToken = token;
-  return token;
+    if (token === registeredPushToken) {
+      console.log("[Notifications] Push token already registered");
+      return token;
+    }
+
+    console.log("[Notifications] Registering push token with backend");
+    await api.registerPushToken(userId, token);
+    registeredPushToken = token;
+    console.log("[Notifications] ✓ Push token registered successfully");
+    return token;
+  } catch (error) {
+    console.error("[Notifications] Error registering push token:", error.message);
+    // Non-blocking failure - don't throw, just log
+    return null;
+  }
 }
 
 export async function unregisterPushTokenForUser(userId) {

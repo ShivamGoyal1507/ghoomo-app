@@ -10,12 +10,25 @@ import AdminNavigator from "./AdminNavigator";
 export default function RootNavigator() {
   const { isAuthenticated, user } = useSelector(s => s.auth);
 
+  React.useEffect(() => {
+    console.log("[RootNavigator] Auth state changed - isAuthenticated:", isAuthenticated, "role:", user?.role);
+  }, [isAuthenticated, user]);
+
   const getNavigator = () => {
-    if (!isAuthenticated) return <AuthNavigator />;
+    if (!isAuthenticated) {
+      console.log("[RootNavigator] Rendering AuthNavigator");
+      return <AuthNavigator />;
+    }
     switch (user?.role) {
-      case "driver": return <DriverNavigator />;
-      case "admin": return <AdminNavigator />;
-      default: return <UserNavigator />;
+      case "driver":
+        console.log("[RootNavigator] Rendering DriverNavigator");
+        return <DriverNavigator />;
+      case "admin":
+        console.log("[RootNavigator] Rendering AdminNavigator");
+        return <AdminNavigator />;
+      default:
+        console.log("[RootNavigator] Rendering UserNavigator");
+        return <UserNavigator />;
     }
   };
 

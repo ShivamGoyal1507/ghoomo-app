@@ -1,6 +1,11 @@
 const http = require("http");
+const path = require("path");
 const { URL } = require("url");
+const { WebSocketServer } = require("ws");
 const { createStorage } = require("./storage");
+
+require("dotenv").config({ path: path.resolve(__dirname, ".env") });
+require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 
 const PORT = Number(process.env.PORT || 4000);
 const DEFAULT_CITY = {
@@ -43,9 +48,112 @@ const DEFAULT_STORE = {
 };
 
 let storage;
+const rideRealtimeSubscribers = new Map();
+const busRealtimeSubscribers = new Set();
 
-function readStore() {
-  const store = storage.readStore();
+function wsSafeSend(socket, payload) {
+  if (!socket || socket.readyState !== 1) return;
+  try {
+    socket.send(JSON.stringify(payload));
+  } catch {
+    // Ignore send failures for disconnected sockets.
+  }
+}
+
+function addRideSubscriber(rideId, socket) {
+  if (!rideId || !socket) return;
+  const key = String(rideId);
+  const bucket = rideRealtimeSubscribers.get(key) || new Set();
+  bucket.add(socket);
+  rideRealtimeSubscribers.set(key, bucket);
+}
+
+function removeRideSubscriber(rideId, socket) {
+  const key = String(rideId || "");
+  const bucket = rideRealtimeSubscribers.get(key);
+  if (!bucket) return;
+  bucket.delete(socket);
+  if (bucket.size === 0) {
+    rideRealtimeSubscribers.delete(key);
+  }
+}
+
+function removeSocketFromAllRideSubscriptions(socket) {
+  for (const [rideId, bucket] of rideRealtimeSubscribers.entries()) {
+    bucket.delete(socket);
+    if (bucket.size === 0) {
+      rideRealtimeSubscribers.delete(rideId);
+    }
+  }
+}
+
+function addBusSubscriber(socket) {
+  if (!socket) return;
+  busRealtimeSubscribers.add(socket);
+}
+
+function removeBusSubscriber(socket) {
+  busRealtimeSubscribers.delete(socket);
+}
+
+function summarizeBusRoutesWithBookings(store) {
+  const routes = getBusRoutes(store);
+  const busBookings = Array.isArray(store.busBookings) ? store.busBookings : [];
+  return routes.map((route) => {
+    const routeBookings = busBookings.filter(
+      (booking) => booking.routeId === route.id && booking.status !== BOOKING_STATUS.CANCELLED
+    );
+    const booked = routeBookings.filter((booking) => !booking.isWaiting).length;
+    const waiting = routeBookings.filter((booking) => booking.isWaiting).length;
+    return {
+      ...route,
+      bookedSeats: booked,
+      availableSeats: Math.max(Number(route.totalSeats || 0) - booked, 0),
+      waitingCount: waiting,
+      loadFactor: Number(route.totalSeats || 0) ? booked / Number(route.totalSeats || 0) : 0,
+    };
+  });
+}
+
+function resequenceWaitingList(store, routeId) {
+  const waitingBookings = (store.busBookings || [])
+    .filter(
+      (booking) =>
+        booking.routeId === routeId &&
+        booking.isWaiting &&
+        booking.status !== BOOKING_STATUS.CANCELLED
+    )
+    .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+
+  waitingBookings.forEach((booking, index) => {
+    booking.waitlistPosition = index + 1;
+    booking.qrCode = JSON.stringify({
+      bookingId: booking.id,
+      userId: booking.userId,
+      busId: booking.routeId,
+      seatNo: booking.seatNumber,
+      waitlistPosition: booking.waitlistPosition,
+      ts: Date.now(),
+    });
+  });
+}
+
+function publishBusRealtimeUpdate(store) {
+  if (!busRealtimeSubscribers.size) return;
+  const payload = {
+    type: "bus:update",
+    ts: new Date().toISOString(),
+    routes: summarizeBusRoutesWithBookings(store),
+    busBookings: Array.isArray(store.busBookings) ? store.busBookings : [],
+  };
+
+  for (const socket of busRealtimeSubscribers) {
+    wsSafeSend(socket, payload);
+  }
+}
+
+async function readStore() {
+  const store = await storage.readStore();
   if (!Array.isArray(store.busRoutes)) {
     store.busRoutes = [];
   }
@@ -139,6 +247,17 @@ function validateRegistration(body) {
 
   if (!name || !email || !phone || !password || !city || !emergencyContact) {
     return { error: "Name, email, phone, city, emergency contact, and password are required." };
+  }
+
+  // Validate email format
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return { error: "Please provide a valid email address." };
+  }
+
+  // Validate password length
+  if (password.length < 6) {
+    return { error: "Password must be at least 6 characters long." };
   }
 
   const user = {
@@ -677,6 +796,34 @@ function refreshRideDriverSnapshot(store, ride) {
   };
 }
 
+function publishRideRealtimeUpdate(store, rideId) {
+  const key = String(rideId || "");
+  const bucket = rideRealtimeSubscribers.get(key);
+  if (!bucket || bucket.size === 0) return;
+
+  const ride = store.rides.find((entry) => String(entry.id) === key);
+  if (!ride) {
+    for (const socket of bucket) {
+      wsSafeSend(socket, {
+        type: "ride:deleted",
+        rideId: key,
+        ts: new Date().toISOString(),
+      });
+    }
+    rideRealtimeSubscribers.delete(key);
+    return;
+  }
+
+  const hydratedRide = refreshRideDriverSnapshot(store, ride);
+  for (const socket of bucket) {
+    wsSafeSend(socket, {
+      type: "ride:update",
+      ride: hydratedRide,
+      ts: new Date().toISOString(),
+    });
+  }
+}
+
 function sanitizeRideForDriver(ride) {
   if (!ride) return null;
   const { otp, ...rest } = ride;
@@ -701,6 +848,7 @@ function buildDriverDashboard(store, driverId) {
     .slice(0, 20);
   const activeRide =
     assignedRides.find((ride) => ride.status === BOOKING_STATUS.IN_PROGRESS) ||
+    assignedRides.find((ride) => ride.status === BOOKING_STATUS.ARRIVED) ||
     assignedRides.find((ride) => ride.status === BOOKING_STATUS.ACCEPTED) ||
     null;
   const todayIso = startOfTodayIso();
@@ -733,7 +881,7 @@ function buildAdminDashboard(store) {
     .filter((user) => user.role === USER_ROLES.DRIVER)
     .sort((a, b) => Number(Boolean(b.online)) - Number(Boolean(a.online)));
   const admins = safeUsers.filter((user) => user.role === USER_ROLES.ADMIN);
-  const activeRideStatuses = new Set([BOOKING_STATUS.ACCEPTED, BOOKING_STATUS.IN_PROGRESS]);
+  const activeRideStatuses = new Set([BOOKING_STATUS.ACCEPTED, BOOKING_STATUS.ARRIVED, BOOKING_STATUS.IN_PROGRESS]);
   const activeRides = store.rides.filter((ride) => activeRideStatuses.has(ride.status));
   const completedRides = store.rides.filter((ride) => ride.status === BOOKING_STATUS.COMPLETED);
   const activeDriverIds = new Set(activeRides.map((ride) => ride.driver?.id).filter(Boolean));
@@ -902,7 +1050,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && requestUrl.pathname === "/api/auth/login") {
       const body = await parseBody(req);
-      const store = readStore();
+      const store = await readStore();
       const user = store.users.find(
         (entry) => entry.email === String(body.email || "").toLowerCase() && entry.password === body.password
       );
@@ -918,7 +1066,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && requestUrl.pathname === "/api/auth/register") {
       const body = await parseBody(req);
-      const store = readStore();
+      const store = await readStore();
       const { user, error } = validateRegistration(body);
 
       if (error) {
@@ -932,15 +1080,25 @@ const server = http.createServer(async (req, res) => {
       }
 
       store.users.push(user);
-      await writeStore(store);
-      sendJson(res, 201, { user: safeUser(user) });
+      try {
+        await writeStore(store);
+        console.log(`[Register] User created: ${user.email} (${user.id})`);
+        sendJson(res, 201, { user: safeUser(user) });
+      } catch (error) {
+        console.error(`[Register] Database write failed for ${user.email}:`, error.message);
+        if (error.code === "STORE_VERSION_CONFLICT") {
+          sendJson(res, 409, { message: "Registration conflict - please try again" });
+        } else {
+          sendJson(res, 500, { message: "Registration failed due to server error" });
+        }
+      }
       return;
     }
 
     // Google authentication endpoint
     if (req.method === "POST" && requestUrl.pathname === "/api/auth/google-login") {
       const body = await parseBody(req);
-      const store = readStore();
+      const store = await readStore();
       
       const firebaseUid = normalizeText(body.firebaseUid);
       const email = String(body.email || "").trim().toLowerCase();
@@ -1029,7 +1187,7 @@ const server = http.createServer(async (req, res) => {
 
     if (requestUrl.pathname.match(/^\/api\/users\/[^/]+\/push-token$/)) {
       const userId = requestUrl.pathname.split("/")[3];
-      const store = readStore();
+      const store = await readStore();
       const user = store.users.find((entry) => entry.id === userId);
       if (!user) {
         sendJson(res, 404, { message: "User not found" });
@@ -1054,7 +1212,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && requestUrl.pathname === "/api/shared-rides") {
       const userId = normalizeText(requestUrl.searchParams.get("userId"));
-      const store = readStore();
+      const store = await readStore();
       const requests = store.sharedRideRequests
         .filter((request) => request.status === "active")
         .map((request) => serializeSharedRideRequest(store, request))
@@ -1074,7 +1232,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && requestUrl.pathname.match(/^\/api\/shared-rides\/by-ride\/[^/]+$/)) {
       const rideId = requestUrl.pathname.split("/")[4];
-      const store = readStore();
+      const store = await readStore();
       const request = store.sharedRideRequests.find((entry) => entry.rideId === rideId);
       sendJson(res, 200, {
         request: request ? serializeSharedRideRequest(store, request) : null,
@@ -1086,7 +1244,7 @@ const server = http.createServer(async (req, res) => {
       const requestId = requestUrl.pathname.split("/")[3];
       const body = await parseBody(req);
       const userId = normalizeText(body.userId);
-      const store = readStore();
+      const store = await readStore();
       const request = store.sharedRideRequests.find((entry) => entry.id === requestId);
       const user = store.users.find((entry) => entry.id === userId);
 
@@ -1138,7 +1296,7 @@ const server = http.createServer(async (req, res) => {
       const requestId = requestUrl.pathname.split("/")[3];
       const body = await parseBody(req);
       const userId = normalizeText(body.userId);
-      const store = readStore();
+      const store = await readStore();
       const request = store.sharedRideRequests.find((entry) => entry.id === requestId);
 
       if (!request || request.status !== "active") {
@@ -1171,14 +1329,14 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && requestUrl.pathname === "/api/bus-routes") {
-      const store = readStore();
+      const store = await readStore();
       sendJson(res, 200, { routes: getBusRoutes(store) });
       return;
     }
 
     if (req.method === "POST" && requestUrl.pathname === "/api/bus-routes") {
       const body = await parseBody(req);
-      const store = readStore();
+      const store = await readStore();
       const { route, error } = validateBusRoutePayload(body);
 
       if (error) {
@@ -1194,7 +1352,213 @@ const server = http.createServer(async (req, res) => {
 
       store.busRoutes = [...routes, route];
       await writeStore(store);
+      publishBusRealtimeUpdate(store);
       sendJson(res, 201, { route, routes: store.busRoutes });
+      return;
+    }
+
+    if (req.method === "GET" && requestUrl.pathname === "/api/bus-bookings") {
+      const store = await readStore();
+      const routeId = normalizeText(requestUrl.searchParams.get("routeId"));
+      const userId = normalizeText(requestUrl.searchParams.get("userId"));
+
+      const busBookings = (store.busBookings || []).filter((booking) => {
+        if (routeId && booking.routeId !== routeId) return false;
+        if (userId && booking.userId !== userId) return false;
+        return true;
+      });
+
+      sendJson(res, 200, {
+        busBookings,
+        routes: summarizeBusRoutesWithBookings(store),
+      });
+      return;
+    }
+
+    if (req.method === "POST" && requestUrl.pathname === "/api/bus-bookings") {
+      const body = await parseBody(req);
+      const routeId = normalizeText(body.routeId);
+      const userId = normalizeText(body.userId);
+      const userName = normalizeText(body.userName) || "Passenger";
+
+      if (!routeId || !userId) {
+        sendJson(res, 400, { message: "routeId and userId are required" });
+        return;
+      }
+
+      const store = await readStore();
+      const route = (store.busRoutes || []).find((entry) => entry.id === routeId);
+      if (!route) {
+        sendJson(res, 404, { message: "Route not found" });
+        return;
+      }
+
+      const existing = (store.busBookings || []).find(
+        (booking) =>
+          booking.routeId === routeId &&
+          booking.userId === userId &&
+          booking.status !== BOOKING_STATUS.CANCELLED
+      );
+
+      if (existing) {
+        sendJson(res, 409, { message: "You already have an active booking for this route", booking: existing });
+        return;
+      }
+
+      const routeBookings = (store.busBookings || []).filter(
+        (booking) => booking.routeId === routeId && booking.status !== BOOKING_STATUS.CANCELLED
+      );
+      const occupiedSeats = new Set(
+        routeBookings.filter((booking) => !booking.isWaiting && Number.isFinite(Number(booking.seatNumber))).map((booking) => Number(booking.seatNumber))
+      );
+
+      const totalSeats = Number(route.totalSeats || 0);
+      const availableSeats = [];
+      for (let seat = 1; seat <= totalSeats; seat += 1) {
+        if (!occupiedSeats.has(seat)) availableSeats.push(seat);
+      }
+
+      const waitingCapacity = Number(route.waitingSeats || 10);
+      const waitingBookings = routeBookings
+        .filter((booking) => booking.isWaiting)
+        .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+
+      if (availableSeats.length === 0 && waitingBookings.length >= waitingCapacity) {
+        sendJson(res, 409, { message: "This route and waitlist are currently full." });
+        return;
+      }
+
+      const bookingId = normalizeText(body.bookingId) || buildId("bus");
+      const isWaiting = availableSeats.length === 0;
+      const seatNumber = isWaiting ? null : availableSeats[0];
+      const waitlistPosition = isWaiting ? waitingBookings.length + 1 : null;
+
+      const booking = {
+        id: bookingId,
+        type: "bus",
+        routeId,
+        seatNumber,
+        waitlistPosition,
+        userId,
+        userName,
+        isWaiting,
+        status: isWaiting ? "waiting" : BOOKING_STATUS.ACCEPTED,
+        verified: false,
+        verifiedAt: null,
+        verifiedBy: null,
+        qrCode: JSON.stringify({
+          bookingId,
+          userId,
+          busId: routeId,
+          seatNo: seatNumber,
+          waitlistPosition,
+          ts: Date.now(),
+        }),
+        createdAt: new Date().toISOString(),
+      };
+
+      store.busBookings = [...(store.busBookings || []), booking];
+      if (isWaiting) {
+        resequenceWaitingList(store, routeId);
+      }
+
+      await writeStore(store);
+      publishBusRealtimeUpdate(store);
+      sendJson(res, 201, {
+        booking,
+        routes: summarizeBusRoutesWithBookings(store),
+      });
+      return;
+    }
+
+    if (req.method === "POST" && requestUrl.pathname.match(/^\/api\/bus-bookings\/[^/]+\/cancel$/)) {
+      const bookingId = requestUrl.pathname.split("/")[3];
+      const store = await readStore();
+      const booking = (store.busBookings || []).find((entry) => entry.id === bookingId);
+
+      if (!booking) {
+        sendJson(res, 404, { message: "Booking not found" });
+        return;
+      }
+      if (booking.verified) {
+        sendJson(res, 409, { message: "Verified tickets cannot be cancelled." });
+        return;
+      }
+      if (booking.status === BOOKING_STATUS.CANCELLED) {
+        sendJson(res, 200, { booking, routes: summarizeBusRoutesWithBookings(store) });
+        return;
+      }
+
+      booking.status = BOOKING_STATUS.CANCELLED;
+      booking.cancelledAt = new Date().toISOString();
+
+      if (!booking.isWaiting && Number.isFinite(Number(booking.seatNumber))) {
+        const waitingQueue = (store.busBookings || [])
+          .filter(
+            (entry) =>
+              entry.routeId === booking.routeId &&
+              entry.isWaiting &&
+              entry.status !== BOOKING_STATUS.CANCELLED
+          )
+          .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+
+        const promoted = waitingQueue[0];
+        if (promoted) {
+          promoted.isWaiting = false;
+          promoted.status = BOOKING_STATUS.ACCEPTED;
+          promoted.seatNumber = booking.seatNumber;
+          promoted.waitlistPosition = null;
+          promoted.qrCode = JSON.stringify({
+            bookingId: promoted.id,
+            userId: promoted.userId,
+            busId: promoted.routeId,
+            seatNo: promoted.seatNumber,
+            waitlistPosition: null,
+            ts: Date.now(),
+          });
+        }
+      }
+
+      resequenceWaitingList(store, booking.routeId);
+      await writeStore(store);
+      publishBusRealtimeUpdate(store);
+      sendJson(res, 200, {
+        booking,
+        routes: summarizeBusRoutesWithBookings(store),
+      });
+      return;
+    }
+
+    if (req.method === "POST" && requestUrl.pathname.match(/^\/api\/bus-bookings\/[^/]+\/verify$/)) {
+      const bookingId = requestUrl.pathname.split("/")[3];
+      const body = await parseBody(req);
+      const verifiedBy = normalizeText(body.verifiedBy) || "bus_driver";
+      const store = await readStore();
+      const booking = (store.busBookings || []).find((entry) => entry.id === bookingId);
+
+      if (!booking) {
+        sendJson(res, 404, { message: "Booking not found" });
+        return;
+      }
+      if (booking.status === BOOKING_STATUS.CANCELLED) {
+        sendJson(res, 409, { message: "Cancelled booking cannot be verified" });
+        return;
+      }
+      if (booking.isWaiting) {
+        sendJson(res, 409, { message: "Waiting list booking cannot be verified" });
+        return;
+      }
+
+      booking.verified = true;
+      booking.verifiedAt = new Date().toISOString();
+      booking.verifiedBy = verifiedBy;
+
+      await writeStore(store);
+      publishBusRealtimeUpdate(store);
+      sendJson(res, 200, {
+        booking,
+        routes: summarizeBusRoutesWithBookings(store),
+      });
       return;
     }
 
@@ -1212,7 +1576,7 @@ const server = http.createServer(async (req, res) => {
       const drop = await ensureLocation(body.drop);
       const route = await getRoute(pickup, drop);
       const normalizedSchedule = normalizeIsoTimestamp(body.scheduledAt);
-      const nearbyDrivers = getNearbyDrivers(readStore(), pickup, body.rideType || "cab");
+      const nearbyDrivers = getNearbyDrivers(await readStore(), pickup, body.rideType || "cab");
       const pricing = calculateFare(body.rideType || "cab", Boolean(body.isShare), route.distanceKm, {
         nearbyDriversCount: nearbyDrivers.length,
         scheduledAt: normalizedSchedule,
@@ -1251,7 +1615,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const store = readStore();
+      const store = await readStore();
       const pickup = {
         latitude: lat,
         longitude: lon,
@@ -1268,7 +1632,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && requestUrl.pathname === "/api/rides") {
       const body = await parseBody(req);
-      const store = readStore();
+      const store = await readStore();
       const pickup = await ensureLocation(body.pickup);
       const drop = await ensureLocation(body.drop);
       const route = await getRoute(pickup, drop);
@@ -1331,6 +1695,7 @@ const server = http.createServer(async (req, res) => {
 
       store.rides.unshift(ride);
       await writeStore(store);
+      publishRideRealtimeUpdate(store, ride.id);
       await notifyUserById(store, ride.userId, {
         title: "Ride request sent",
         body: `${nearbyDrivers.length} nearby drivers received your request.`,
@@ -1352,7 +1717,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && requestUrl.pathname.startsWith("/api/rides/history/")) {
       const userId = requestUrl.pathname.split("/").pop();
-      const store = readStore();
+      const store = await readStore();
       const rides = store.rides
         .filter((ride) => ride.userId === userId)
         .map((ride) => refreshRideDriverSnapshot(store, ride));
@@ -1362,7 +1727,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && requestUrl.pathname.startsWith("/api/drivers/") && requestUrl.pathname.endsWith("/dashboard")) {
       const driverId = requestUrl.pathname.split("/")[3];
-      const store = readStore();
+      const store = await readStore();
       const dashboard = buildDriverDashboard(store, driverId);
       if (!dashboard) {
         sendJson(res, 404, { message: "Driver not found" });
@@ -1373,7 +1738,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && requestUrl.pathname === "/api/admin/dashboard") {
-      const store = readStore();
+      const store = await readStore();
       sendJson(res, 200, buildAdminDashboard(store));
       return;
     }
@@ -1381,7 +1746,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && requestUrl.pathname.startsWith("/api/drivers/") && requestUrl.pathname.endsWith("/status")) {
       const driverId = requestUrl.pathname.split("/")[3];
       const body = await parseBody(req);
-      const store = readStore();
+      const store = await readStore();
       const driver = store.users.find((user) => user.id === driverId && user.role === "driver");
       if (!driver) {
         sendJson(res, 404, { message: "Driver not found" });
@@ -1397,7 +1762,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && requestUrl.pathname.startsWith("/api/drivers/") && requestUrl.pathname.endsWith("/location")) {
       const driverId = requestUrl.pathname.split("/")[3];
       const body = await parseBody(req);
-      const store = readStore();
+      const store = await readStore();
       const driver = store.users.find((user) => user.id === driverId && user.role === "driver");
       if (!driver) {
         sendJson(res, 404, { message: "Driver not found" });
@@ -1410,6 +1775,7 @@ const server = http.createServer(async (req, res) => {
       };
       driver.lastSeenAt = new Date().toISOString();
 
+      const touchedRideIds = [];
       store.rides.forEach((ride) => {
         if (
           ride.driver?.id === driverId &&
@@ -1427,10 +1793,12 @@ const server = http.createServer(async (req, res) => {
             targetPoint || ride.pickup
           );
           ride.updatedAt = new Date().toISOString();
+          touchedRideIds.push(ride.id);
         }
       });
 
       await writeStore(store);
+      touchedRideIds.forEach((rideId) => publishRideRealtimeUpdate(store, rideId));
       const dashboard = buildDriverDashboard(store, driverId);
       sendJson(res, 200, dashboard);
       return;
@@ -1438,7 +1806,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && requestUrl.pathname.startsWith("/api/rides/")) {
       const rideId = requestUrl.pathname.split("/").pop();
-      const store = readStore();
+      const store = await readStore();
       const ride = store.rides.find((entry) => entry.id === rideId);
       if (!ride) {
         sendJson(res, 404, { message: "Ride not found" });
@@ -1451,7 +1819,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && requestUrl.pathname.match(/^\/api\/rides\/[^/]+\/status$/)) {
       const rideId = requestUrl.pathname.split("/")[3];
       const body = await parseBody(req);
-      const store = readStore();
+      const store = await readStore();
       const ride = store.rides.find((entry) => entry.id === rideId);
       if (!ride) {
         sendJson(res, 404, { message: "Ride not found" });
@@ -1502,6 +1870,7 @@ const server = http.createServer(async (req, res) => {
         ride.acceptedAt = new Date().toISOString();
         ride.updatedAt = new Date().toISOString();
         await writeStore(store);
+        publishRideRealtimeUpdate(store, ride.id);
         await notifyUserById(store, ride.userId, {
           title: "Driver accepted your ride",
           body: `${driver.name} accepted your request and is on the way.`,
@@ -1521,6 +1890,7 @@ const server = http.createServer(async (req, res) => {
           closeSharedRideRequestsForRide(store, ride.id, "closed");
         }
         await writeStore(store);
+        publishRideRealtimeUpdate(store, ride.id);
         if (reassignmentResult.reassigned) {
           await notifyUserById(store, ride.userId, {
             title: "Driver updated",
@@ -1568,6 +1938,7 @@ const server = http.createServer(async (req, res) => {
         closeSharedRideRequestsForRide(store, ride.id, "closed");
       }
       await writeStore(store);
+      publishRideRealtimeUpdate(store, ride.id);
       if (ride.status === BOOKING_STATUS.IN_PROGRESS) {
         await notifyUserById(store, ride.userId, {
           title: "Ride started",
@@ -1602,8 +1973,110 @@ const server = http.createServer(async (req, res) => {
 
     sendJson(res, 404, { message: "Not found" });
   } catch (error) {
+    if (error?.code === "STORE_VERSION_CONFLICT") {
+      sendJson(res, 409, { message: error.message || "Concurrent update conflict. Please retry." });
+      return;
+    }
     sendJson(res, 500, { message: error.message || "Internal server error" });
   }
+});
+
+const wss = new WebSocketServer({ noServer: true });
+
+wss.on("connection", (socket) => {
+  wsSafeSend(socket, {
+    type: "connected",
+    ts: new Date().toISOString(),
+  });
+
+  socket.on("message", async (raw) => {
+    let message;
+    try {
+      message = JSON.parse(String(raw || "{}"));
+    } catch {
+      wsSafeSend(socket, { type: "error", message: "Invalid JSON payload" });
+      return;
+    }
+
+    if (message?.action === "subscribe_ride") {
+      const rideId = String(message.rideId || "");
+      if (!rideId) {
+        wsSafeSend(socket, { type: "error", message: "rideId is required" });
+        return;
+      }
+
+      addRideSubscriber(rideId, socket);
+      wsSafeSend(socket, { type: "subscribed", channel: "ride", rideId });
+
+      try {
+        const store = await readStore();
+        publishRideRealtimeUpdate(store, rideId);
+      } catch {
+        wsSafeSend(socket, { type: "error", message: "Unable to load initial ride state" });
+      }
+      return;
+    }
+
+    if (message?.action === "unsubscribe_ride") {
+      removeRideSubscriber(message.rideId, socket);
+      wsSafeSend(socket, { type: "unsubscribed", channel: "ride", rideId: String(message.rideId || "") });
+      return;
+    }
+
+    if (message?.action === "subscribe_bus") {
+      addBusSubscriber(socket);
+      wsSafeSend(socket, { type: "subscribed", channel: "bus" });
+      try {
+        const store = await readStore();
+        publishBusRealtimeUpdate(store);
+      } catch {
+        wsSafeSend(socket, { type: "error", message: "Unable to load bus realtime state" });
+      }
+      return;
+    }
+
+    if (message?.action === "unsubscribe_bus") {
+      removeBusSubscriber(socket);
+      wsSafeSend(socket, { type: "unsubscribed", channel: "bus" });
+      return;
+    }
+
+    if (message?.action === "ping") {
+      wsSafeSend(socket, { type: "pong", ts: new Date().toISOString() });
+      return;
+    }
+
+    wsSafeSend(socket, { type: "error", message: "Unknown action" });
+  });
+
+  socket.on("close", () => {
+    removeSocketFromAllRideSubscriptions(socket);
+    removeBusSubscriber(socket);
+  });
+
+  socket.on("error", () => {
+    removeSocketFromAllRideSubscriptions(socket);
+    removeBusSubscriber(socket);
+  });
+});
+
+server.on("upgrade", (req, socket, head) => {
+  let requestUrl;
+  try {
+    requestUrl = new URL(req.url, `http://${req.headers.host}`);
+  } catch {
+    socket.destroy();
+    return;
+  }
+
+  if (requestUrl.pathname !== "/ws") {
+    socket.destroy();
+    return;
+  }
+
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    wss.emit("connection", ws, req);
+  });
 });
 
 createStorage({ seedStore: DEFAULT_STORE })

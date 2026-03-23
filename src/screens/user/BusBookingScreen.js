@@ -4,7 +4,12 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useDispatch, useSelector } from "react-redux";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { bookBusSeat, cancelBusBooking } from "../../store/slices/bookingSlice";
+import {
+  cancelBusSeatBooking,
+  createBusSeatBooking,
+  fetchBusBookings,
+  setBusBookings,
+} from "../../store/slices/bookingSlice";
 import { fetchBusRoutes } from "../../store/slices/busRoutesSlice";
 import Header from "../../components/common/Header";
 import Button from "../../components/common/Button";
@@ -13,6 +18,7 @@ import Badge from "../../components/common/Badge";
 import QRDisplay from "../../components/common/QRDisplay";
 import { COLORS, SPACING } from "../../constants";
 import { sendLocalNotification } from "../../services/notifications";
+import { subscribeBusRealtime } from "../../services/realtime";
 import {
   BUS_WAITLIST_LIMIT,
   formatRelativeMinutes,
@@ -42,6 +48,20 @@ export default function BusBookingScreen({ navigation }) {
 
   useEffect(() => {
     dispatch(fetchBusRoutes()).catch(() => {});
+    dispatch(fetchBusBookings()).catch(() => {});
+  }, [dispatch]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeBusRealtime({
+      onBusUpdate: ({ busBookings }) => {
+        dispatch(setBusBookings(busBookings || []));
+      },
+      onError: () => {
+        dispatch(fetchBusBookings()).catch(() => {});
+      },
+    });
+
+    return () => unsubscribe();
   }, [dispatch]);
 
   useEffect(() => {
@@ -73,7 +93,7 @@ export default function BusBookingScreen({ navigation }) {
     });
   }, [routes, now, busBookings]);
 
-  const handleBook = () => {
+  const handleBook = async () => {
     if (!selectedRoute) return;
 
     const existingBooking = getUserRouteBooking(selectedRoute.id);
@@ -94,63 +114,41 @@ export default function BusBookingScreen({ navigation }) {
       return;
     }
 
-    if (occupancy.availableSeats.length > 0) {
-      const assignedSeat = occupancy.availableSeats[0];
-      const bookingId = createBusBookingId();
-      dispatch(
-        bookBusSeat({
-          bookingId,
-          routeId: selectedRoute.id,
-          seatNumber: assignedSeat,
-          userId: user.id,
-          userName: user.name,
-          isWaiting: false,
-        })
-      );
-      sendLocalNotification({
-        key: `bus-booking-${bookingId}`,
-        title: "Bus seat confirmed",
-        body: `${selectedRoute.name} seat ${assignedSeat} is booked for you.`,
-        data: { bookingId, routeId: selectedRoute.id, type: "bus" },
-      }).catch(() => {});
-      setLastBooking({
-        id: bookingId,
-        routeId: selectedRoute.id,
-        seatNumber: assignedSeat,
-        waitlistPosition: null,
-        isWaiting: false,
-        routeName: selectedRoute.name,
-      });
-    } else if (occupancy.waitlistRemaining > 0) {
-      const bookingId = createBusBookingId();
-      const nextPosition = occupancy.waitingBookings.length + 1;
-      dispatch(
-        bookBusSeat({
-          bookingId,
-          routeId: selectedRoute.id,
-          seatNumber: null,
-          waitlistPosition: nextPosition,
-          userId: user.id,
-          userName: user.name,
-          isWaiting: true,
-        })
-      );
-      sendLocalNotification({
-        key: `bus-waiting-${bookingId}`,
-        title: "Added to waiting list",
-        body: `${selectedRoute.name} waitlist position ${nextPosition} is reserved.`,
-        data: { bookingId, routeId: selectedRoute.id, type: "bus" },
-      }).catch(() => {});
-      setLastBooking({
-        id: bookingId,
-        routeId: selectedRoute.id,
-        seatNumber: null,
-        waitlistPosition: nextPosition,
-        isWaiting: true,
-        routeName: selectedRoute.name,
-      });
-    } else {
+    if (occupancy.availableSeats.length === 0 && occupancy.waitlistRemaining <= 0) {
       Alert.alert("Bus Full", "This route is full and the waiting list is also full right now.");
+      return;
+    }
+
+    try {
+      const bookingId = createBusBookingId();
+      const booking = await dispatch(
+        createBusSeatBooking({
+          bookingId,
+          routeId: selectedRoute.id,
+          userId: user.id,
+          userName: user.name,
+        })
+      );
+
+      sendLocalNotification({
+        key: booking.isWaiting ? `bus-waiting-${booking.id}` : `bus-booking-${booking.id}`,
+        title: booking.isWaiting ? "Added to waiting list" : "Bus seat confirmed",
+        body: booking.isWaiting
+          ? `${selectedRoute.name} waitlist position ${booking.waitlistPosition} is reserved.`
+          : `${selectedRoute.name} seat ${booking.seatNumber} is booked for you.`,
+        data: { bookingId: booking.id, routeId: selectedRoute.id, type: "bus" },
+      }).catch(() => {});
+
+      setLastBooking({
+        id: booking.id,
+        routeId: selectedRoute.id,
+        seatNumber: booking.seatNumber,
+        waitlistPosition: booking.waitlistPosition,
+        isWaiting: booking.isWaiting,
+        routeName: selectedRoute.name,
+      });
+    } catch (error) {
+      Alert.alert("Booking Failed", error.message || "Unable to book seat right now.");
       return;
     }
 
@@ -175,7 +173,9 @@ export default function BusBookingScreen({ navigation }) {
         text: "Yes, Cancel",
         style: "destructive",
         onPress: () => {
-          dispatch(cancelBusBooking({ bookingId: booking.id }));
+          dispatch(cancelBusSeatBooking(booking.id)).catch((cancelError) => {
+            Alert.alert("Cancel Failed", cancelError.message || "Unable to cancel booking.");
+          });
           sendLocalNotification({
             key: `bus-cancel-${booking.id}`,
             title: "Bus booking cancelled",

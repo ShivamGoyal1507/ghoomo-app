@@ -95,11 +95,17 @@ export const loginUser = (email, password) => async (dispatch) => {
       uid: firebaseUser?.uid || user.firebaseUid || null,
       email: firebaseUser?.email || user.email,
       displayName: firebaseUser?.displayName || user.name,
-      role: firebaseUser?.role || user.role,
+      role: user.role || firebaseUser?.role,
       name: user.name,
       phone: user.phone,
       city: user.city,
       photoURL: firebaseUser?.photoURL || user.photoURL || null,
+      vehicleType: user.vehicleType || null,
+      vehicleNo: user.vehicleNo || null,
+      licenseNumber: user.licenseNumber || null,
+      busRoute: user.busRoute || null,
+      employeeId: user.employeeId || null,
+      organization: user.organization || null,
     };
 
     dispatch(loginSuccess({ user: combinedUser, firebaseUser, authMethod }));
@@ -118,6 +124,7 @@ export const registerUser = (userData) => async (dispatch) => {
   dispatch(loginStart());
   try {
     // Sign up with Firebase
+    console.log("[Auth] Step 1: Starting Firebase signup for", userData.email);
     const firebaseResult = await signUpWithEmail(
       userData.email,
       userData.password,
@@ -126,13 +133,17 @@ export const registerUser = (userData) => async (dispatch) => {
     );
 
     if (!firebaseResult.success) {
-      throw new Error(firebaseResult.error);
+      console.error("[Auth] Firebase signup failed:", firebaseResult.error);
+      throw new Error(`Firebase signup failed: ${firebaseResult.error}`);
     }
 
+    console.log("[Auth] Step 1 ✓: Firebase signup successful, UID:", firebaseResult.user.uid);
     const firebaseUser = firebaseResult.user;
 
     // Call backend to create user record
+    console.log("[Auth] Step 2: Creating backend user record");
     const { user } = await api.register(userData);
+    console.log("[Auth] Step 2 ✓: Backend user created, ID:", user.id);
 
     // Store combined user info
     const combinedUser = {
@@ -140,21 +151,38 @@ export const registerUser = (userData) => async (dispatch) => {
       uid: firebaseUser.uid,
       email: firebaseUser.email,
       displayName: firebaseUser.displayName,
-      role: firebaseUser.role,
+      role: user.role || firebaseUser.role,
       name: user.name,
       phone: user.phone,
       city: user.city,
       photoURL: firebaseUser.photoURL,
+      vehicleType: user.vehicleType || null,
+      vehicleNo: user.vehicleNo || null,
+      licenseNumber: user.licenseNumber || null,
+      busRoute: user.busRoute || null,
+      employeeId: user.employeeId || null,
+      organization: user.organization || null,
     };
 
+    console.log("[Auth] Step 3: Storing auth data locally");
     dispatch(loginSuccess({ user: combinedUser, firebaseUser, authMethod: "email" }));
+    console.log("[Auth] Step 3 ✓: Redux state updated, isAuthenticated =", true);
+    
     await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
       ...combinedUser,
       firebaseUser,
       authMethod: "email",
     }));
-    await registerPushTokenForUser(user.id);
+    
+    console.log("[Auth] Step 4: Registering push token");
+    try {
+      await registerPushTokenForUser(user.id);
+    } catch (tokenError) {
+      console.warn("[Auth] Push token registration failed (non-blocking):", tokenError.message);
+    }
+    console.log("[Auth] ✓ Registration complete!");
   } catch (error) {
+    console.error("[Auth] Registration error:", error.message, error.stack);
     dispatch(loginFailure(error.message || "Unable to register"));
   }
 };
@@ -196,11 +224,17 @@ export const googleSignIn = (promptAsync, selectedRole = "user") => async (dispa
       uid: firebaseUser.uid,
       email: firebaseUser.email,
       displayName: firebaseUser.displayName,
-      role: firebaseUser.role,
+      role: user.role || firebaseUser.role,
       name: user.name || firebaseUser.displayName,
       phone: user.phone,
       city: user.city,
       photoURL: firebaseUser.photoURL,
+      vehicleType: user.vehicleType || null,
+      vehicleNo: user.vehicleNo || null,
+      licenseNumber: user.licenseNumber || null,
+      busRoute: user.busRoute || null,
+      employeeId: user.employeeId || null,
+      organization: user.organization || null,
     };
 
     dispatch(loginSuccess({ user: combinedUser, firebaseUser, authMethod: "google" }));
