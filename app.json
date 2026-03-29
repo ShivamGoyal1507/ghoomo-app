@@ -46,6 +46,8 @@
       ],
       "expo-font"
     ],
-    "extra": {}
+    "extra": {
+      "apiBaseUrl": "https://ghoomo-backend.onrender.com"
+    }
   }
 }

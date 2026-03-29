@@ -14,10 +14,10 @@ function getHostUri() {
 }
 
 export function getApiBaseUrl() {
-  const explicitConfigured = process.env.EXPO_PUBLIC_API_BASE_URL || "";
+  const explicitConfigured = (process.env.EXPO_PUBLIC_API_BASE_URL || "").trim().replace(/\/$/, "");
   if (explicitConfigured) return explicitConfigured;
 
-  const configured = Constants.expoConfig?.extra?.apiBaseUrl || "";
+  const configured = (Constants.expoConfig?.extra?.apiBaseUrl || "").trim().replace(/\/$/, "");
   if (configured && !/localhost|127\.0\.0\.1/.test(configured)) return configured;
 
   const expoHost = getHostUri();

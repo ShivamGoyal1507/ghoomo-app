@@ -8,13 +8,10 @@
   },
   "scripts": {
     "build": "node -e \"console.log('No build step required')\"",
-    "start": "node server.js",
-    "android": "expo run:android",
-    "ios": "expo run:ios"
+    "start": "node server.js"
   },
   "dependencies": {
-    "expo": "~54.0.33",
-    "react": "19.1.0",
-    "react-native": "0.81.5"
+    "dotenv": "^17.3.1",
+    "pg": "^8.20.0"
   }
 }

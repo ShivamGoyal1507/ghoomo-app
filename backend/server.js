@@ -1,11 +1,8 @@
 const http = require("http");
-const fs = require("fs");
-const path = require("path");
 const { URL } = require("url");
+const { initStorage, readStore, writeStore, useSupabase } = require("./src/storage");
 
 const PORT = Number(process.env.PORT || 4000);
-const DEFAULT_DATA_PATH = path.join(__dirname, "data", "store.json");
-const DATA_PATH = process.env.DATA_PATH || path.join(process.env.DATA_DIR || path.join(__dirname, "data"), "store.json");
 const DEFAULT_CITY = {
   name: "Ludhiana, Punjab, India",
   lat: 30.900965,
@@ -105,44 +102,6 @@ const DRIVER_POOL = [
     lonOffset: -0.011,
   },
 ];
-
-function readStore() {
-  ensureDataFile();
-  const store = JSON.parse(fs.readFileSync(DATA_PATH, "utf8"));
-  if (!Array.isArray(store.busRoutes)) {
-    store.busRoutes = DEFAULT_BUS_ROUTES.map((route) => ({ ...route }));
-  }
-  if (!Array.isArray(store.busBookings)) {
-    store.busBookings = [];
-  }
-  if (!Array.isArray(store.sharedRideRequests)) {
-    store.sharedRideRequests = [];
-  }
-  return store;
-}
-
-function writeStore(data) {
-  ensureDataFile();
-  fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2));
-}
-
-function ensureDataFile() {
-  const dataDir = path.dirname(DATA_PATH);
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-  if (fs.existsSync(DATA_PATH)) {
-    return;
-  }
-  if (fs.existsSync(DEFAULT_DATA_PATH)) {
-    fs.copyFileSync(DEFAULT_DATA_PATH, DATA_PATH);
-    return;
-  }
-  fs.writeFileSync(
-    DATA_PATH,
-    JSON.stringify({ users: [], rides: [], busRoutes: DEFAULT_BUS_ROUTES, busBookings: [], sharedRideRequests: [] }, null, 2)
-  );
-}
 
 function getBusRoutes(store) {
   return (store.busRoutes || DEFAULT_BUS_ROUTES).map((route) => ({
@@ -789,7 +748,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && requestUrl.pathname === "/api/auth/login") {
       const body = await parseBody(req);
-      const store = readStore();
+      const store = await readStore();
       const user = store.users.find(
         (entry) => entry.email === String(body.email || "").toLowerCase() && entry.password === body.password
       );
@@ -805,7 +764,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && requestUrl.pathname === "/api/auth/register") {
       const body = await parseBody(req);
-      const store = readStore();
+      const store = await readStore();
       const { user, error } = validateRegistration(body);
 
       if (error) {
@@ -819,14 +778,14 @@ const server = http.createServer(async (req, res) => {
       }
 
       store.users.push(user);
-      writeStore(store);
+      await writeStore(store);
       sendJson(res, 201, { user: safeUser(user) });
       return;
     }
 
     if (requestUrl.pathname.match(/^\/api\/users\/[^/]+\/push-token$/)) {
       const userId = requestUrl.pathname.split("/")[3];
-      const store = readStore();
+      const store = await readStore();
       const user = store.users.find((entry) => entry.id === userId);
       if (!user) {
         sendJson(res, 404, { message: "User not found" });
@@ -836,14 +795,14 @@ const server = http.createServer(async (req, res) => {
       if (req.method === "POST") {
         const body = await parseBody(req);
         user.pushToken = normalizeText(body.token);
-        writeStore(store);
+        await writeStore(store);
         sendJson(res, 200, { ok: true });
         return;
       }
 
       if (req.method === "DELETE") {
         delete user.pushToken;
-        writeStore(store);
+        await writeStore(store);
         sendJson(res, 200, { ok: true });
         return;
       }
@@ -851,7 +810,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && requestUrl.pathname === "/api/shared-rides") {
       const userId = normalizeText(requestUrl.searchParams.get("userId"));
-      const store = readStore();
+      const store = await readStore();
       const requests = store.sharedRideRequests
         .filter((request) => request.status === "active")
         .map((request) => serializeSharedRideRequest(store, request))
@@ -871,7 +830,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && requestUrl.pathname.match(/^\/api\/shared-rides\/by-ride\/[^/]+$/)) {
       const rideId = requestUrl.pathname.split("/")[4];
-      const store = readStore();
+      const store = await readStore();
       const request = store.sharedRideRequests.find((entry) => entry.rideId === rideId);
       sendJson(res, 200, {
         request: request ? serializeSharedRideRequest(store, request) : null,
@@ -883,7 +842,7 @@ const server = http.createServer(async (req, res) => {
       const requestId = requestUrl.pathname.split("/")[3];
       const body = await parseBody(req);
       const userId = normalizeText(body.userId);
-      const store = readStore();
+      const store = await readStore();
       const request = store.sharedRideRequests.find((entry) => entry.id === requestId);
       const user = store.users.find((entry) => entry.id === userId);
 
@@ -918,7 +877,7 @@ const server = http.createServer(async (req, res) => {
         request.status = "full";
       }
 
-      writeStore(store);
+      await writeStore(store);
       await notifyUserById(store, request.ownerId, {
         title: "Shared ride joined",
         body: isFull
@@ -935,7 +894,7 @@ const server = http.createServer(async (req, res) => {
       const requestId = requestUrl.pathname.split("/")[3];
       const body = await parseBody(req);
       const userId = normalizeText(body.userId);
-      const store = readStore();
+      const store = await readStore();
       const request = store.sharedRideRequests.find((entry) => entry.id === requestId);
 
       if (!request || request.status !== "active") {
@@ -949,7 +908,7 @@ const server = http.createServer(async (req, res) => {
 
       request.status = "closed";
       request.updatedAt = new Date().toISOString();
-      writeStore(store);
+      await writeStore(store);
       sendJson(res, 200, { request: serializeSharedRideRequest(store, request) });
       return;
     }
@@ -968,14 +927,14 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && requestUrl.pathname === "/api/bus-routes") {
-      const store = readStore();
+      const store = await readStore();
       sendJson(res, 200, { routes: getBusRoutes(store) });
       return;
     }
 
     if (req.method === "POST" && requestUrl.pathname === "/api/bus-routes") {
       const body = await parseBody(req);
-      const store = readStore();
+      const store = await readStore();
       const { route, error } = validateBusRoutePayload(body);
 
       if (error) {
@@ -990,7 +949,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       store.busRoutes = [...routes, route];
-      writeStore(store);
+      await writeStore(store);
       sendJson(res, 201, { route, routes: store.busRoutes });
       return;
     }
@@ -1009,7 +968,7 @@ const server = http.createServer(async (req, res) => {
       const drop = await ensureLocation(body.drop);
       const route = await getRoute(pickup, drop);
       const pricing = calculateFare(body.rideType || "cab", Boolean(body.isShare), route.distanceKm);
-      const nearbyDrivers = getNearbyDrivers(readStore(), pickup, body.rideType || "cab");
+      const nearbyDrivers = getNearbyDrivers(await readStore(), pickup, body.rideType || "cab");
       const driver = nearbyDrivers[0] || null;
       sendJson(res, 200, {
         pickup,
@@ -1033,7 +992,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && requestUrl.pathname === "/api/rides") {
       const body = await parseBody(req);
-      const store = readStore();
+      const store = await readStore();
       const pickup = await ensureLocation(body.pickup);
       const drop = await ensureLocation(body.drop);
       const route = await getRoute(pickup, drop);
@@ -1085,7 +1044,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       store.rides.unshift(ride);
-      writeStore(store);
+      await writeStore(store);
       await notifyUserById(store, ride.userId, {
         title: "Ride request sent",
         body: `${nearbyDrivers.length} nearby drivers received your request.`,
@@ -1107,7 +1066,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && requestUrl.pathname.startsWith("/api/rides/history/")) {
       const userId = requestUrl.pathname.split("/").pop();
-      const store = readStore();
+      const store = await readStore();
       const rides = store.rides
         .filter((ride) => ride.userId === userId)
         .map((ride) => refreshRideDriverSnapshot(store, ride));
@@ -1117,7 +1076,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && requestUrl.pathname.startsWith("/api/drivers/") && requestUrl.pathname.endsWith("/dashboard")) {
       const driverId = requestUrl.pathname.split("/")[3];
-      const store = readStore();
+      const store = await readStore();
       const dashboard = buildDriverDashboard(store, driverId);
       if (!dashboard) {
         sendJson(res, 404, { message: "Driver not found" });
@@ -1128,7 +1087,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && requestUrl.pathname === "/api/admin/dashboard") {
-      const store = readStore();
+      const store = await readStore();
       sendJson(res, 200, buildAdminDashboard(store));
       return;
     }
@@ -1136,7 +1095,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && requestUrl.pathname.startsWith("/api/drivers/") && requestUrl.pathname.endsWith("/status")) {
       const driverId = requestUrl.pathname.split("/")[3];
       const body = await parseBody(req);
-      const store = readStore();
+      const store = await readStore();
       const driver = store.users.find((user) => user.id === driverId && user.role === "driver");
       if (!driver) {
         sendJson(res, 404, { message: "Driver not found" });
@@ -1144,7 +1103,7 @@ const server = http.createServer(async (req, res) => {
       }
       driver.online = Boolean(body.online);
       driver.lastSeenAt = new Date().toISOString();
-      writeStore(store);
+      await writeStore(store);
       sendJson(res, 200, { driver: safeUser(driver) });
       return;
     }
@@ -1152,7 +1111,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && requestUrl.pathname.startsWith("/api/drivers/") && requestUrl.pathname.endsWith("/location")) {
       const driverId = requestUrl.pathname.split("/")[3];
       const body = await parseBody(req);
-      const store = readStore();
+      const store = await readStore();
       const driver = store.users.find((user) => user.id === driverId && user.role === "driver");
       if (!driver) {
         sendJson(res, 404, { message: "Driver not found" });
@@ -1185,7 +1144,7 @@ const server = http.createServer(async (req, res) => {
         }
       });
 
-      writeStore(store);
+      await writeStore(store);
       const dashboard = buildDriverDashboard(store, driverId);
       sendJson(res, 200, dashboard);
       return;
@@ -1193,7 +1152,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && requestUrl.pathname.startsWith("/api/rides/")) {
       const rideId = requestUrl.pathname.split("/").pop();
-      const store = readStore();
+      const store = await readStore();
       const ride = store.rides.find((entry) => entry.id === rideId);
       if (!ride) {
         sendJson(res, 404, { message: "Ride not found" });
@@ -1206,7 +1165,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && requestUrl.pathname.match(/^\/api\/rides\/[^/]+\/status$/)) {
       const rideId = requestUrl.pathname.split("/")[3];
       const body = await parseBody(req);
-      const store = readStore();
+      const store = await readStore();
       const ride = store.rides.find((entry) => entry.id === rideId);
       if (!ride) {
         sendJson(res, 404, { message: "Ride not found" });
@@ -1245,7 +1204,7 @@ const server = http.createServer(async (req, res) => {
         ride.status = BOOKING_STATUS.ACCEPTED;
         ride.acceptedAt = new Date().toISOString();
         ride.updatedAt = new Date().toISOString();
-        writeStore(store);
+        await writeStore(store);
         await notifyUserById(store, ride.userId, {
           title: "Driver accepted your ride",
           body: `${driver.name} accepted your request and is on the way.`,
@@ -1264,7 +1223,7 @@ const server = http.createServer(async (req, res) => {
         if (reassignmentResult.cancelled) {
           closeSharedRideRequestsForRide(store, ride.id, "closed");
         }
-        writeStore(store);
+        await writeStore(store);
         if (reassignmentResult.reassigned) {
           await notifyUserById(store, ride.userId, {
             title: "Driver updated",
@@ -1311,7 +1270,7 @@ const server = http.createServer(async (req, res) => {
       if (ride.status === BOOKING_STATUS.COMPLETED || ride.status === BOOKING_STATUS.CANCELLED) {
         closeSharedRideRequestsForRide(store, ride.id, "closed");
       }
-      writeStore(store);
+      await writeStore(store);
       if (ride.status === BOOKING_STATUS.IN_PROGRESS) {
         await notifyUserById(store, ride.userId, {
           title: "Ride started",
@@ -1343,6 +1302,15 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`Ghoomo backend listening on http://${HOST}:${PORT}`);
+async function startServer() {
+  await initStorage();
+  server.listen(PORT, HOST, () => {
+    console.log(`Ghoomo backend listening on http://${HOST}:${PORT}`);
+    console.log(`Storage backend: ${useSupabase ? "supabase-postgres" : "local-json"}`);
+  });
+}
+
+startServer().catch((error) => {
+  console.error("Failed to initialize storage", error);
+  process.exit(1);
 });
