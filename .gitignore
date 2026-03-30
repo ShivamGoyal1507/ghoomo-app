@@ -40,3 +40,6 @@ ios/Pods/
 node_modules/
 android/.gradle/
 build/
+.expo/
+
+.env.local

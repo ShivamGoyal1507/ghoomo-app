@@ -98,7 +98,7 @@ export default function RegisterScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
           <LinearGradient colors={[COLORS.accent, "#22C55E"]} style={styles.topBg}>
             <Header title="Create Account" onBack={() => navigation.goBack()} transparent />

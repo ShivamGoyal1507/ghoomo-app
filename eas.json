@@ -11,7 +11,17 @@
       },
       "android": {
         "buildType": "apk"
-      }
+      },
+      "channel": "preview"
+    },
+    "production-apk": {
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://ghoomo-backend.onrender.com"
+      },
+      "android": {
+        "buildType": "apk"
+      },
+      "channel": "production-apk"
     },
     "production": {
       "env": {
@@ -19,7 +29,8 @@
       },
       "android": {
         "buildType": "app-bundle"
-      }
+      },
+      "channel": "production"
     }
   },
   "submit": {
