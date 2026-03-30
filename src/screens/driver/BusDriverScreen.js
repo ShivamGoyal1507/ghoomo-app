@@ -172,6 +172,12 @@ export default function BusDriverScreen({ navigation }) {
               value={manualInput}
               onChangeText={setManualInput}
               multiline
+              androidDisableFullscreenInput
+              underlineColorAndroid="transparent"
+              selectionColor={COLORS.primary}
+              cursorColor={COLORS.primary}
+              autoCorrect={false}
+              autoCapitalize="none"
             />
             <TouchableOpacity style={styles.verifyBtn} onPress={handleManualVerify}>
               <LinearGradient colors={[COLORS.primary, COLORS.primaryDark]} style={styles.verifyGrad}>

@@ -354,6 +354,12 @@ export default function DriverHomeScreen() {
                           importantForAutofill="yes"
                           selectTextOnFocus
                           showSoftInputOnFocus
+                          androidDisableFullscreenInput
+                          underlineColorAndroid="transparent"
+                          selectionColor={COLORS.primary}
+                          cursorColor={COLORS.primary}
+                          autoCorrect={false}
+                          autoCapitalize="none"
                           onFocus={() => setIsOtpFocused(true)}
                           onBlur={() => setIsOtpFocused(false)}
                         />

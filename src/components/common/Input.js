@@ -23,6 +23,17 @@ export default function Input({
   const [secure, setSecure] = useState(secureTextEntry || false);
   const [focused, setFocused] = useState(false);
 
+  const mergedInputProps = {
+    autoCorrect: false,
+    autoCapitalize: "none",
+    selectionColor: COLORS.primary,
+    cursorColor: COLORS.primary,
+    underlineColorAndroid: "transparent",
+    androidDisableFullscreenInput: true,
+    importantForAutofill: "yes",
+    ...textInputProps,
+  };
+
   return (
     <View style={[styles.container, style]}>
       {label && <Text style={styles.label}>{label}</Text>}
@@ -41,7 +52,7 @@ export default function Input({
           onBlur={() => setFocused(false)}
           multiline={multiline}
           editable={editable}
-          {...textInputProps}
+          {...mergedInputProps}
         />
         {secureTextEntry && (
           <TouchableOpacity onPress={() => setSecure(!secure)} style={styles.rightIcon}>

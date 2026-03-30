@@ -180,6 +180,10 @@ const AdminFormInput = memo(function AdminFormInput({
         autoCapitalize="none"
         blurOnSubmit={!multiline}
         multiline={multiline}
+        androidDisableFullscreenInput
+        underlineColorAndroid="transparent"
+        selectionColor={COLORS.primary}
+        cursorColor={COLORS.primary}
         {...props}
       />
     </View>
