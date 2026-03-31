@@ -211,7 +211,7 @@ export default function BookRideScreen({ navigation, route }) {
         style={styles.scroll}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
-        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "none"}
         contentContainerStyle={styles.scrollContent}
       >
 

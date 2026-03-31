@@ -484,7 +484,7 @@ export default function AdminDashboardScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="always"
-        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "none"}
         removeClippedSubviews={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >

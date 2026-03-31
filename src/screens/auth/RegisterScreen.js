@@ -99,7 +99,11 @@ export default function RegisterScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "none"}
+        >
           <LinearGradient colors={[COLORS.accent, "#22C55E"]} style={styles.topBg}>
             <Header title="Create Account" onBack={() => navigation.goBack()} transparent />
             <Text style={styles.sub}>Choose your role and fill the important account details</Text>

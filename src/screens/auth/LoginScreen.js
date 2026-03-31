@@ -27,7 +27,11 @@ export default function LoginScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "none"}
+        >
           <LinearGradient colors={[COLORS.primary, COLORS.primaryDark]} style={styles.topBg}>
             <View style={styles.logoRow}>
               <View style={styles.iconCircle}>

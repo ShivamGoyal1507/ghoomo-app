@@ -202,7 +202,7 @@ export default function DriverHomeScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
-        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "none"}
       >
         <LinearGradient colors={isOnline ? [COLORS.success, "#059669"] : [COLORS.grayDark, "#374151"]} style={styles.header}>
           <View style={styles.headerTop}>
