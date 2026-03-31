@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { View, Image, StyleSheet, Text, useWindowDimensions } from "react-native";
+import { View, Image, StyleSheet, Text, Pressable, useWindowDimensions } from "react-native";
 import Svg, { Circle, Text as SvgText } from "react-native-svg";
 import { COLORS } from "../../constants";
 import { buildTileGrid, getMapRegion, projectToGrid } from "../../utils/map";
 
 const CLUSTER_RADIUS_PX = 38;
 const ANIMATION_MS = 1300;
+const MIN_ZOOM = 9;
+const MAX_ZOOM = 18;
 
 function toPoint(item) {
   return {
@@ -104,7 +106,12 @@ export default function DriverDiscoveryMap({
   const [tileLoadSuccess, setTileLoadSuccess] = useState(0);
 
   const allPoints = useMemo(() => [pickup, ...renderDrivers].filter(Boolean), [pickup, renderDrivers]);
-  const region = useMemo(() => getMapRegion(allPoints), [allPoints]);
+  const autoRegion = useMemo(() => getMapRegion(allPoints), [allPoints]);
+  const [zoom, setZoom] = useState(() => autoRegion.zoom || 13);
+  const region = useMemo(
+    () => ({ ...autoRegion, zoom: Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom)) }),
+    [autoRegion, zoom]
+  );
   const grid = useMemo(() => buildTileGrid(region), [region]);
   const clusters = useMemo(
     () => groupDriversForClusters(renderDrivers, region, grid),
@@ -113,6 +120,8 @@ export default function DriverDiscoveryMap({
 
   const scale = Math.min(1, Math.max(0.42, (windowWidth - 32) / grid.width));
   const showTileFallback = tileLoadFailures >= grid.tiles.length && tileLoadSuccess === 0;
+  const canZoomIn = zoom < MAX_ZOOM;
+  const canZoomOut = zoom > MIN_ZOOM;
 
   useEffect(() => {
     const normalized = drivers
@@ -218,6 +227,23 @@ export default function DriverDiscoveryMap({
       <View style={styles.attribution}>
         <Text style={styles.attributionText}>Map data © OpenStreetMap contributors</Text>
       </View>
+
+      <View style={styles.zoomControls}>
+        <Pressable
+          style={[styles.zoomButton, !canZoomIn && styles.zoomButtonDisabled]}
+          onPress={() => setZoom((value) => Math.min(MAX_ZOOM, value + 1))}
+          disabled={!canZoomIn}
+        >
+          <Text style={styles.zoomButtonText}>+</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.zoomButton, !canZoomOut && styles.zoomButtonDisabled]}
+          onPress={() => setZoom((value) => Math.max(MIN_ZOOM, value - 1))}
+          disabled={!canZoomOut}
+        >
+          <Text style={styles.zoomButtonText}>-</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -300,5 +326,30 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: COLORS.textSecondary,
     fontWeight: "600",
+  },
+  zoomControls: {
+    position: "absolute",
+    right: 10,
+    top: "42%",
+    backgroundColor: "rgba(255,255,255,0.94)",
+    borderRadius: 10,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(15,23,42,0.08)",
+  },
+  zoomButton: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  zoomButtonDisabled: {
+    opacity: 0.4,
+  },
+  zoomButtonText: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: COLORS.text,
+    lineHeight: 22,
   },
 });

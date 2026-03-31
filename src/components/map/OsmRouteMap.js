@@ -1,8 +1,11 @@
 import React, { useMemo, useState } from "react";
-import { View, Image, StyleSheet, Text, useWindowDimensions } from "react-native";
+import { View, Image, StyleSheet, Text, Pressable, useWindowDimensions } from "react-native";
 import Svg, { Circle, Path } from "react-native-svg";
 import { COLORS } from "../../constants";
 import { buildTileGrid, getMapRegion, projectToGrid } from "../../utils/map";
+
+const MIN_ZOOM = 9;
+const MAX_ZOOM = 18;
 
 function buildPath(points, region, grid) {
   return points
@@ -26,13 +29,20 @@ function Marker({ point, color, region, grid }) {
 export default function OsmRouteMap({ pickup, drop, driver, routePoints = [] }) {
   const { width: windowWidth } = useWindowDimensions();
   const allPoints = [pickup, drop, driver, ...routePoints].filter(Boolean);
-  const region = useMemo(() => getMapRegion(allPoints), [pickup, drop, driver, routePoints]);
+  const autoRegion = useMemo(() => getMapRegion(allPoints), [pickup, drop, driver, routePoints]);
+  const [zoom, setZoom] = useState(() => autoRegion.zoom || 13);
+  const region = useMemo(
+    () => ({ ...autoRegion, zoom: Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom)) }),
+    [autoRegion, zoom]
+  );
   const grid = useMemo(() => buildTileGrid(region), [region]);
   const path = useMemo(() => buildPath(routePoints, region, grid), [routePoints, region, grid]);
   const [tileLoadFailures, setTileLoadFailures] = useState(0);
   const [tileLoadSuccess, setTileLoadSuccess] = useState(0);
   const scale = Math.min(1, Math.max(0.42, (windowWidth - 32) / grid.width));
   const showTileFallback = tileLoadFailures >= grid.tiles.length && tileLoadSuccess === 0;
+  const canZoomIn = zoom < MAX_ZOOM;
+  const canZoomOut = zoom > MIN_ZOOM;
 
   return (
     <View style={styles.wrapper}>
@@ -72,6 +82,23 @@ export default function OsmRouteMap({ pickup, drop, driver, routePoints = [] }) 
 
       <View style={styles.attribution}>
         <Text style={styles.attributionText}>Map data © OpenStreetMap contributors</Text>
+      </View>
+
+      <View style={styles.zoomControls}>
+        <Pressable
+          style={[styles.zoomButton, !canZoomIn && styles.zoomButtonDisabled]}
+          onPress={() => setZoom((value) => Math.min(MAX_ZOOM, value + 1))}
+          disabled={!canZoomIn}
+        >
+          <Text style={styles.zoomButtonText}>+</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.zoomButton, !canZoomOut && styles.zoomButtonDisabled]}
+          onPress={() => setZoom((value) => Math.max(MIN_ZOOM, value - 1))}
+          disabled={!canZoomOut}
+        >
+          <Text style={styles.zoomButtonText}>-</Text>
+        </Pressable>
       </View>
     </View>
   );
@@ -136,5 +163,30 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: COLORS.textSecondary,
     fontWeight: "600",
+  },
+  zoomControls: {
+    position: "absolute",
+    right: 10,
+    top: "40%",
+    backgroundColor: "rgba(255,255,255,0.94)",
+    borderRadius: 10,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(15,23,42,0.08)",
+  },
+  zoomButton: {
+    width: 38,
+    height: 38,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  zoomButtonDisabled: {
+    opacity: 0.4,
+  },
+  zoomButtonText: {
+    fontSize: 22,
+    fontWeight: "700",
+    color: COLORS.text,
+    lineHeight: 24,
   },
 });
