@@ -1,8 +1,0 @@
-{
-  "android": {
-    "package": "com.anonymous.ghoomobackend"
-  },
-  "ios": {
-    "bundleIdentifier": "com.anonymous.ghoomobackend"
-  }
-}
