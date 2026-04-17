@@ -77,6 +77,34 @@ function SimpleField({
   );
 }
 
+function buildPlaceFromCoords(coords, geocodeResult) {
+  const street = [geocodeResult?.streetNumber, geocodeResult?.street].filter(Boolean).join(" ").trim();
+  const nameParts = [
+    geocodeResult?.name,
+    street,
+    geocodeResult?.district,
+    geocodeResult?.city,
+  ].filter(Boolean);
+  const fallbackName = `Lat ${Number(coords.latitude).toFixed(5)}, Lon ${Number(coords.longitude).toFixed(5)}`;
+
+  return {
+    id: `coord-${Number(coords.latitude).toFixed(6)}-${Number(coords.longitude).toFixed(6)}`,
+    name: nameParts[0] || fallbackName,
+    address: nameParts.join(", ") || fallbackName,
+    latitude: coords.latitude,
+    longitude: coords.longitude,
+  };
+}
+
+async function reverseGeocodeOnDevice(coords) {
+  try {
+    const result = await Location.reverseGeocodeAsync(coords);
+    return buildPlaceFromCoords(coords, Array.isArray(result) ? result[0] : null);
+  } catch (_error) {
+    return buildPlaceFromCoords(coords, null);
+  }
+}
+
 export default function BookRideScreen({ navigation, route }) {
   const dispatch = useDispatch();
   const scrollRef = useRef(null);
@@ -134,15 +162,10 @@ export default function BookRideScreen({ navigation, route }) {
       };
       setCurrentCoords(coords);
 
-      try {
-        const { place } = await api.reverseGeocode(coords);
-        if (!mounted) return;
-        setPickupPlace(place);
-        setPickupInput(place.name);
-      } catch (_error) {
-        if (!mounted) return;
-        setPickupPlace(coords);
-      }
+      const place = await reverseGeocodeOnDevice(coords);
+      if (!mounted) return;
+      setPickupPlace(place);
+      setPickupInput(place.name);
     })();
 
     return () => {
@@ -245,15 +268,8 @@ export default function BookRideScreen({ navigation, route }) {
 
   const useCurrentLocation = async () => {
     if (!currentCoords) return;
-    try {
-      const { place } = await api.reverseGeocode(currentCoords);
-      applyPlace("pickup", place);
-    } catch (_error) {
-      applyPlace("pickup", {
-        name: "Current Location",
-        ...currentCoords,
-      });
-    }
+    const place = await reverseGeocodeOnDevice(currentCoords);
+    applyPlace("pickup", place);
   };
 
   return (

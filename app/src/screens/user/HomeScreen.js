@@ -3,9 +3,10 @@ import React from "react";
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions, StatusBar } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
-import { useSelector } from "react-redux";
+import { useDispatch, useSelector } from "react-redux";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { COLORS, FARES, RADIUS, SHADOWS, SPACING } from "../../constants";
+import { setUserFooterMode } from "../../store/slices/navigationPreferencesSlice";
 
 const { width } = Dimensions.get("window");
 const isTablet = width >= 768;
@@ -14,17 +15,23 @@ const serviceCardWidth = isTablet
   : (width - SPACING.md * 2 - 12) / 2;
 
 const SERVICES = [
-  { id: "bike", label: "Bike", icon: "bicycle", color: "#FF6B35", gradient: ["#FF6B35", "#FF8C60"], screen: "BookRide", params: { rideType: "bike" } },
-  { id: "auto", label: "Auto", icon: "car-sport", color: "#F59E0B", gradient: ["#F59E0B", "#FCD34D"], screen: "BookRide", params: { rideType: "auto" } },
-  { id: "cab", label: "Cab", icon: "car", color: "#6C63FF", gradient: ["#6C63FF", "#8B84FF"], screen: "BookRide", params: { rideType: "cab" } },
-  { id: "bus", label: "College Bus", icon: "bus", color: "#10B981", gradient: ["#10B981", "#34D399"], screen: "CollegeBusHome", params: {} },
+  { id: "bike", label: "Bike", icon: "bicycle", color: "#FF6B35", gradient: ["#FF6B35", "#FF8C60"], screen: "BookRide", params: { rideType: "bike" }, mode: "shared" },
+  { id: "auto", label: "Auto", icon: "car-sport", color: "#F59E0B", gradient: ["#F59E0B", "#FCD34D"], screen: "BookRide", params: { rideType: "auto" }, mode: "shared" },
+  { id: "cab", label: "Cab", icon: "car", color: "#6C63FF", gradient: ["#6C63FF", "#8B84FF"], screen: "BookRide", params: { rideType: "cab" }, mode: "shared" },
+  { id: "bus", label: "College Bus", icon: "bus", color: "#10B981", gradient: ["#10B981", "#34D399"], screen: "CollegeBusHome", params: {}, mode: "bus" },
 ];
 
 export default function HomeScreen({ navigation }) {
+  const dispatch = useDispatch();
   const user = useSelector(s => s.auth.user);
   const activeBooking = useSelector(s => s.booking.activeBooking);
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good Morning" : hour < 17 ? "Good Afternoon" : "Good Evening";
+
+  const handleServicePress = (service) => {
+    dispatch(setUserFooterMode(service.mode || "shared"));
+    navigation.navigate(service.screen, service.params);
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -67,7 +74,7 @@ export default function HomeScreen({ navigation }) {
           <Text style={styles.sectionTitle}>Book a Ride</Text>
           <View style={styles.servicesGrid}>
             {SERVICES.map(s => (
-              <TouchableOpacity key={s.id} style={[styles.serviceCard, { width: serviceCardWidth }]} onPress={() => navigation.navigate(s.screen, s.params)} activeOpacity={0.9}>
+              <TouchableOpacity key={s.id} style={[styles.serviceCard, { width: serviceCardWidth }]} onPress={() => handleServicePress(s)} activeOpacity={0.9}>
                 <LinearGradient colors={s.gradient} style={styles.serviceGradient}>
                   <Ionicons name={s.icon} size={28} color={COLORS.white} />
                 </LinearGradient>
@@ -80,36 +87,7 @@ export default function HomeScreen({ navigation }) {
           </View>
         </View>
 
-        {/* Quick Actions */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
-          <View style={styles.quickRow}>
-            {[
-              { icon: "time", label: "History", screen: "History", color: COLORS.primary },
-              { icon: "wallet", label: "Wallet", screen: "Profile", color: "#10B981" },
-              { icon: "star", label: "Favorites", screen: "Profile", color: "#F59E0B" },
-              { icon: "help-circle", label: "Support", screen: "Profile", color: "#EF4444" },
-            ].map(q => (
-              <TouchableOpacity key={q.label} style={styles.quickBtn} onPress={() => navigation.navigate(q.screen)}>
-                <View style={[styles.quickIcon, { backgroundColor: q.color + "20" }]}>
-                  <Ionicons name={q.icon} size={22} color={q.color} />
-                </View>
-                <Text style={styles.quickLabel}>{q.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
 
-        {/* Promo Banner */}
-        <View style={styles.section}>
-          <LinearGradient colors={["#1D4ED8", "#0EA5E9"]} style={styles.promoBanner}>
-            <View>
-              <Text style={styles.promoTitle}>Share & Save!</Text>
-              <Text style={styles.promoSub}>Share cab/auto rides and save up to 40%</Text>
-            </View>
-            <Ionicons name="people" size={48} color="rgba(255,255,255,0.4)" />
-          </LinearGradient>
-        </View>
 
         <View style={{ height: SPACING.xxl }} />
       </ScrollView>

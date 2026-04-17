@@ -3,7 +3,8 @@ import React from "react";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
-import { View, Text, StyleSheet } from "react-native";
+import { StyleSheet } from "react-native";
+import { useSelector } from "react-redux";
 import { COLORS } from "../constants";
 
 import HomeScreen from "../screens/user/HomeScreen";
@@ -15,6 +16,7 @@ import CollegeBusLiveScreen from "../screens/user/CollegeBusLiveScreen";
 import RideTrackingScreen from "../screens/user/RideTrackingScreen";
 import RideHistoryScreen from "../screens/user/RideHistoryScreen";
 import ProfileScreen from "../screens/user/ProfileScreen";
+import SharedRidesScreen from "../screens/user/SharedRidesScreen";
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -43,6 +45,9 @@ function BusStack() {
 }
 
 export default function UserNavigator() {
+  const userFooterMode = useSelector((state) => state.navigationPreferences?.userFooterMode || "shared");
+  const isBusMode = userFooterMode === "bus";
+
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -54,7 +59,7 @@ export default function UserNavigator() {
         tabBarIcon: ({ focused, color, size }) => {
           const icons = {
             Home: focused ? "home" : "home-outline",
-            Bus: focused ? "bus" : "bus-outline",
+            Service: isBusMode ? (focused ? "bus" : "bus-outline") : (focused ? "people" : "people-outline"),
             History: focused ? "time" : "time-outline",
             Profile: focused ? "person" : "person-outline",
           };
@@ -63,7 +68,12 @@ export default function UserNavigator() {
       })}
     >
       <Tab.Screen name="Home" component={HomeStack} />
-      <Tab.Screen name="Bus" component={BusStack} options={{ title: "Book Bus" }} />
+      <Tab.Screen
+        key={`service-${userFooterMode}`}
+        name="Service"
+        component={isBusMode ? BusStack : SharedRidesScreen}
+        options={{ title: isBusMode ? "Bus Booking" : "Shared Ride" }}
+      />
       <Tab.Screen name="History" component={RideHistoryScreen} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>

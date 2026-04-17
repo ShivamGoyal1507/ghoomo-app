@@ -5,6 +5,7 @@ import bookingReducer from "./slices/bookingSlice";
 import driverReducer from "./slices/driverSlice";
 import busRoutesReducer from "./slices/busRoutesSlice";
 import sharedRidesReducer from "./slices/sharedRidesSlice";
+import navigationPreferencesReducer from "./slices/navigationPreferencesSlice";
 
 export const store = configureStore({
   reducer: {
@@ -13,6 +14,7 @@ export const store = configureStore({
     driver: driverReducer,
     busRoutes: busRoutesReducer,
     sharedRides: sharedRidesReducer,
+    navigationPreferences: navigationPreferencesReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({ serializableCheck: false }),

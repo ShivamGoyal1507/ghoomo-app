@@ -8,6 +8,7 @@ import Header from "../../components/common/Header";
 import Card from "../../components/common/Card";
 import { COLORS, SPACING } from "../../constants";
 import { fetchBusRoutes } from "../../store/slices/busRoutesSlice";
+import { setUserFooterMode } from "../../store/slices/navigationPreferencesSlice";
 
 export default function CollegeBusHomeScreen({ navigation }) {
   const { width } = useWindowDimensions();
@@ -33,7 +34,10 @@ export default function CollegeBusHomeScreen({ navigation }) {
       <Header
         title="College Bus"
         subtitle="Track bus routes"
-        onBack={() => navigation.goBack()}
+        onBack={() => {
+          dispatch(setUserFooterMode("shared"));
+          navigation.goBack();
+        }}
       />
 
       <ScrollView style={styles.scroll} contentContainerStyle={{ padding: SPACING.md }}>
