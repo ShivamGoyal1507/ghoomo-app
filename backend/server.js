@@ -1,10 +1,14 @@
 const http = require("http");
 const path = require("path");
+const fs = require("fs");
 const { URL } = require("url");
 const { WebSocketServer } = require("ws");
 const { createStorage } = require("./storage");
 
-require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
+const backendEnvPath = path.resolve(__dirname, ".env");
+const rootEnvPath = path.resolve(__dirname, "../.env");
+const envPathToUse = fs.existsSync(backendEnvPath) ? backendEnvPath : rootEnvPath;
+require("dotenv").config({ path: envPathToUse });
 
 const PORT = Number(process.env.PORT || 4000);
 const DEFAULT_CITY = {
@@ -1123,7 +1127,20 @@ async function requestHandler(req, res) {
   try {
     await ensureStorageReady();
 
-    if (req.method === "GET" && requestUrl.pathname === "/health") {
+    const isHealthPath = requestUrl.pathname === "/health" || requestUrl.pathname === "/api/health";
+
+    if ((req.method === "GET" || req.method === "HEAD") && isHealthPath) {
+      if (req.method === "HEAD") {
+        res.writeHead(200, {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        });
+        res.end();
+        return;
+      }
+
       sendJson(res, 200, { ok: true, service: "ghoomo-backend" });
       return;
     }

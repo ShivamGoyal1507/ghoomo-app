@@ -411,7 +411,49 @@ export const dashboardAPI = {
       if (error) throw error;
       return { data: payload };
     },
-    () => Promise.reject(new Error('Create route is not available on this backend.'))
+    async (data) => {
+      const to12Hour = (timeValue) => {
+        const raw = String(timeValue || '').trim();
+        const matched = raw.match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+        if (!matched) return raw;
+
+        const hours24 = Number(matched[1]);
+        const minutes = matched[2];
+        const suffix = hours24 >= 12 ? 'PM' : 'AM';
+        const hours12 = hours24 % 12 || 12;
+        return `${String(hours12).padStart(2, '0')}:${minutes} ${suffix}`;
+      };
+
+      const normalizedStops = (Array.isArray(data.stops) ? data.stops : [])
+        .map((stop) => {
+          if (typeof stop === 'string') {
+            return { name: stop.trim(), time: '' };
+          }
+
+          return {
+            name: String(stop?.name || stop?.stop || '').trim(),
+            time: String(stop?.time || stop?.arrivalTime || '').trim(),
+          };
+        })
+        .filter((stop) => stop.name);
+
+      const stopNames = normalizedStops.map((stop) => stop.name);
+      const firstTimedStop = normalizedStops.find((stop) => stop.time);
+      const lastTimedStop = [...normalizedStops].reverse().find((stop) => stop.time);
+
+      const payload = {
+        name: data.name,
+        from: data.startPoint || data.from,
+        to: data.endPoint || data.to,
+        departureTime: to12Hour(data.departureTime || firstTimedStop?.time || ''),
+        returnTime: to12Hour(data.returnTime || lastTimedStop?.time || firstTimedStop?.time || ''),
+        totalSeats: Number(data.totalSeats || 40),
+        stops: stopNames,
+      };
+
+      const response = await api.post('/bus-routes', payload);
+      return { data: response.data?.route || payload };
+    }
   ),
 
   updateRoute: withBackendFallback(

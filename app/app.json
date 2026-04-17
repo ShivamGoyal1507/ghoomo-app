@@ -18,7 +18,7 @@
     "orientation": "portrait",
     "web": {},
     "extra": {
-      "apiBaseUrl": "https://backend-fawn-seven-41.vercel.app",
+      "apiBaseUrl": "http://localhost:4000",
       "eas": {
         "projectId": "34a9c2f4-8e0e-4d29-a0b2-b8b4eaf924ed"
       },

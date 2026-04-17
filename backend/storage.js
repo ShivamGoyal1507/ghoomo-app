@@ -120,6 +120,16 @@ function toJsonParam(rows) {
   return JSON.stringify(Array.isArray(rows) ? rows : []);
 }
 
+function isStoreEmpty(store) {
+  return (
+    store.users.length === 0 &&
+    store.rides.length === 0 &&
+    store.busRoutes.length === 0 &&
+    store.busBookings.length === 0 &&
+    store.sharedRideRequests.length === 0
+  );
+}
+
 async function replaceUsers(client, users) {
   const rows = users
     .filter((user) => user && user.id)
@@ -502,17 +512,34 @@ async function createStorage({ seedStore }) {
 
   await pool.query(CREATE_SCHEMA_SQL);
 
-  const snapshot = await readStoreFromDb(pool);
-  const isEmpty =
-    snapshot.users.length === 0 &&
-    snapshot.rides.length === 0 &&
-    snapshot.busRoutes.length === 0 &&
-    snapshot.busBookings.length === 0 &&
-    snapshot.sharedRideRequests.length === 0;
+  let snapshot = await readStoreFromDb(pool);
 
-  if (isEmpty) {
+  // Concurrent cold starts can race during initial bootstrap.
+  // Retry by re-reading state when optimistic version conflict happens.
+  if (isStoreEmpty(snapshot)) {
     const bootstrapStore = loadBootstrapStore(seedStore);
-    await writeStoreToDb(pool, { ...bootstrapStore, __version: 1 });
+    const maxBootstrapAttempts = Number(process.env.STORE_BOOTSTRAP_RETRIES || 3);
+
+    for (let attempt = 0; attempt < maxBootstrapAttempts; attempt += 1) {
+      try {
+        await writeStoreToDb(pool, { ...bootstrapStore, __version: snapshot.__version || 1 });
+        snapshot = await readStoreFromDb(pool);
+        break;
+      } catch (error) {
+        if (error?.code !== "STORE_VERSION_CONFLICT") {
+          throw error;
+        }
+
+        snapshot = await readStoreFromDb(pool);
+        if (!isStoreEmpty(snapshot)) {
+          break;
+        }
+
+        if (attempt === maxBootstrapAttempts - 1) {
+          throw error;
+        }
+      }
+    }
   }
 
   return {

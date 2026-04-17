@@ -50,6 +50,7 @@
   "homepage": "https://ghoomo.com",
   "dependencies": {
     "expo-updates": "~29.0.16",
+    "vercel": "^51.6.1",
     "vexo-analytics": "^1.5.4"
   }
 }
