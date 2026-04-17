@@ -6,7 +6,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSelector } from "react-redux";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { COLORS, FARES, RADIUS, SHADOWS, SPACING } from "../../constants";
-import Card from "../../components/common/Card";
 
 const { width } = Dimensions.get("window");
 const isTablet = width >= 768;
@@ -18,7 +17,7 @@ const SERVICES = [
   { id: "bike", label: "Bike", icon: "bicycle", color: "#FF6B35", gradient: ["#FF6B35", "#FF8C60"], screen: "BookRide", params: { rideType: "bike" } },
   { id: "auto", label: "Auto", icon: "car-sport", color: "#F59E0B", gradient: ["#F59E0B", "#FCD34D"], screen: "BookRide", params: { rideType: "auto" } },
   { id: "cab", label: "Cab", icon: "car", color: "#6C63FF", gradient: ["#6C63FF", "#8B84FF"], screen: "BookRide", params: { rideType: "cab" } },
-  { id: "bus", label: "College Bus", icon: "bus", color: "#10B981", gradient: ["#10B981", "#34D399"], screen: "BusBooking", params: {} },
+  { id: "bus", label: "College Bus", icon: "bus", color: "#10B981", gradient: ["#10B981", "#34D399"], screen: "CollegeBusHome", params: {} },
 ];
 
 export default function HomeScreen({ navigation }) {

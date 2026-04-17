@@ -116,6 +116,46 @@ function loadBootstrapStore(seedStore) {
   }
 }
 
+function readStoreFromFile() {
+  if (!fs.existsSync(DEFAULT_DATA_PATH)) {
+    return normalizeStore({});
+  }
+
+  try {
+    const raw = fs.readFileSync(DEFAULT_DATA_PATH, "utf8");
+    return normalizeStore(JSON.parse(raw));
+  } catch {
+    return normalizeStore({});
+  }
+}
+
+function writeStoreToFile(store) {
+  const normalizedStore = normalizeStore(store);
+  fs.writeFileSync(DEFAULT_DATA_PATH, JSON.stringify(normalizedStore, null, 2));
+}
+
+function createFileStorage({ seedStore }) {
+  const bootstrapStore = loadBootstrapStore(seedStore);
+  let snapshot = readStoreFromFile();
+
+  if (isStoreEmpty(snapshot)) {
+    snapshot = bootstrapStore;
+    writeStoreToFile(snapshot);
+  }
+
+  return {
+    mode: "file",
+    async readStore() {
+      snapshot = readStoreFromFile();
+      return cloneData(snapshot);
+    },
+    async writeStore(store) {
+      snapshot = normalizeStore(store);
+      writeStoreToFile(snapshot);
+    },
+  };
+}
+
 function toJsonParam(rows) {
   return JSON.stringify(Array.isArray(rows) ? rows : []);
 }
@@ -499,20 +539,42 @@ async function writeStoreToDb(pool, store) {
 async function createStorage({ seedStore }) {
   const databaseUrl = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || "";
   if (!databaseUrl) {
-    throw new Error("SUPABASE_DB_URL (or DATABASE_URL) is required. JSON file storage is disabled.");
+    return createFileStorage({ seedStore });
   }
 
   const pool = new Pool({
     connectionString: databaseUrl,
-    ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false },
+    ssl:
+      process.env.PGSSL === "false" || process.env.PGSSLMODE === "disable"
+        ? false
+        : { rejectUnauthorized: String(process.env.PGSSL_REJECT_UNAUTHORIZED || "false").toLowerCase() !== "true" },
     max: Number(process.env.PG_POOL_MAX || 20),
     idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS || 30000),
     connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS || 10000),
   });
 
-  await pool.query(CREATE_SCHEMA_SQL);
+  const fallbackToFileStorage = (error) => {
+    console.warn(`[storage] Supabase Postgres unavailable, falling back to file storage: ${error?.message || error}`);
+    try {
+      void pool.end();
+    } catch {
+      // Ignore cleanup failures during fallback.
+    }
+    return createFileStorage({ seedStore });
+  };
 
-  let snapshot = await readStoreFromDb(pool);
+  try {
+    await pool.query(CREATE_SCHEMA_SQL);
+  } catch (error) {
+    return fallbackToFileStorage(error);
+  }
+
+  let snapshot;
+  try {
+    snapshot = await readStoreFromDb(pool);
+  } catch (error) {
+    return fallbackToFileStorage(error);
+  }
 
   // Concurrent cold starts can race during initial bootstrap.
   // Retry by re-reading state when optimistic version conflict happens.

@@ -262,6 +262,21 @@
   background: #FECACA;
 }
 
+.btn-view {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-view:hover {
+  filter: brightness(0.95);
+}
+
 @media (max-width: 768px) {
   .routes-header {
     flex-direction: column;

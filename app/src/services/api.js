@@ -1,7 +1,15 @@
 import { Platform } from "react-native";
 import Constants from "expo-constants";
 
-const DEFAULT_PORT = "4000";
+const DEFAULT_PROTOCOL = (process.env.EXPO_PUBLIC_API_PROTOCOL || "http").trim();
+const DEFAULT_PORT = (process.env.EXPO_PUBLIC_API_PORT || "").trim();
+const DEFAULT_ANDROID_EMULATOR_HOST = (process.env.EXPO_PUBLIC_API_ANDROID_EMULATOR_HOST || "").trim();
+const DEFAULT_LOCALHOST_HOST = (process.env.EXPO_PUBLIC_API_LOCALHOST_HOST || "").trim();
+
+function buildDevUrl(host) {
+  if (!host || !DEFAULT_PORT) return "";
+  return `${DEFAULT_PROTOCOL}://${host}:${DEFAULT_PORT}`;
+}
 
 function getHostUri() {
   const hostUri =
@@ -21,11 +29,20 @@ export function getApiBaseUrl() {
   if (configured && !/localhost|127\.0\.0\.1/.test(configured)) return configured;
 
   const expoHost = getHostUri();
-  if (expoHost) return `http://${expoHost}:${DEFAULT_PORT}`;
+  const expoHostUrl = buildDevUrl(expoHost);
+  if (expoHostUrl) return expoHostUrl;
 
   if (configured) return configured;
-  if (Platform.OS === "android") return `http://10.0.2.2:${DEFAULT_PORT}`;
-  return `http://localhost:${DEFAULT_PORT}`;
+  if (Platform.OS === "android") {
+    const androidFallbackUrl = buildDevUrl(DEFAULT_ANDROID_EMULATOR_HOST);
+    if (androidFallbackUrl) return androidFallbackUrl;
+  }
+  const localhostFallbackUrl = buildDevUrl(DEFAULT_LOCALHOST_HOST);
+  if (localhostFallbackUrl) return localhostFallbackUrl;
+
+  throw new Error(
+    "API base URL is not configured. Set EXPO_PUBLIC_API_BASE_URL or fallback host/port env values."
+  );
 }
 
 async function request(path, options = {}) {

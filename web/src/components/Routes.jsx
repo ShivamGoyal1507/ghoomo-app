@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import dashboardAPI from '../services/dashboardAPI';
 import '../styles/Routes.css';
 
 const EMPTY_STOP = { name: '', time: '' };
 
 export default function Routes_Component() {
+  const navigate = useNavigate();
   const [routes, setRoutes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -129,6 +131,10 @@ export default function Routes_Component() {
       })
       .filter((stop) => stop.name)
       .map((stop) => (stop.time ? `${stop.name} (${stop.time})` : stop.name));
+  };
+
+  const handleRouteSelect = (route) => {
+    navigate(`/dashboard/routes/${route.id}`, { state: { route } });
   };
 
   const handleCreate = async (e) => {
@@ -318,6 +324,7 @@ export default function Routes_Component() {
               <th>Total Seats</th>
               <th>Passengers</th>
               <th>Status</th>
+              <th>Action</th>
             </tr>
           </thead>
           <tbody>
@@ -343,6 +350,15 @@ export default function Routes_Component() {
                     <td>{route.totalSeats || 0}</td>
                     <td>{route.bookedSeats || 0}</td>
                     <td><span className={`status-badge ${route.availableSeats > 0 ? 'active' : 'suspended'}`}>{route.availableSeats > 0 ? 'active' : 'full'}</span></td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn-view"
+                        onClick={() => handleRouteSelect(route)}
+                      >
+                        View Details
+                      </button>
+                    </td>
                   </tr>
                 );
               })}

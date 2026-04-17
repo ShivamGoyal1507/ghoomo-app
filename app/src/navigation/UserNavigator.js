@@ -7,13 +7,14 @@ import { View, Text, StyleSheet } from "react-native";
 import { COLORS } from "../constants";
 
 import HomeScreen from "../screens/user/HomeScreen";
+import CollegeBusHomeScreen from "../screens/user/CollegeBusHomeScreen";
 import RideTypeSelectionScreen from "../screens/user/RideTypeSelectionScreen";
 import BookRideScreen from "../screens/user/BookRideScreen";
 import BusBookingScreen from "../screens/user/BusBookingScreen";
+import CollegeBusLiveScreen from "../screens/user/CollegeBusLiveScreen";
 import RideTrackingScreen from "../screens/user/RideTrackingScreen";
 import RideHistoryScreen from "../screens/user/RideHistoryScreen";
 import ProfileScreen from "../screens/user/ProfileScreen";
-import SharedRidesScreen from "../screens/user/SharedRidesScreen";
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -22,10 +23,21 @@ function HomeStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="UserHome" component={HomeScreen} />
+      <Stack.Screen name="CollegeBusHome" component={CollegeBusHomeScreen} />
       <Stack.Screen name="RideTypeSelection" component={RideTypeSelectionScreen} />
       <Stack.Screen name="BookRide" component={BookRideScreen} />
       <Stack.Screen name="BusBooking" component={BusBookingScreen} />
+      <Stack.Screen name="CollegeBusLive" component={CollegeBusLiveScreen} />
       <Stack.Screen name="RideTracking" component={RideTrackingScreen} />
+    </Stack.Navigator>
+  );
+}
+
+function BusStack() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="BusBookingHome" component={BusBookingScreen} />
+      <Stack.Screen name="CollegeBusLive" component={CollegeBusLiveScreen} />
     </Stack.Navigator>
   );
 }
@@ -42,7 +54,7 @@ export default function UserNavigator() {
         tabBarIcon: ({ focused, color, size }) => {
           const icons = {
             Home: focused ? "home" : "home-outline",
-            Shared: focused ? "people" : "people-outline",
+            Bus: focused ? "bus" : "bus-outline",
             History: focused ? "time" : "time-outline",
             Profile: focused ? "person" : "person-outline",
           };
@@ -51,7 +63,7 @@ export default function UserNavigator() {
       })}
     >
       <Tab.Screen name="Home" component={HomeStack} />
-      <Tab.Screen name="Shared" component={SharedRidesScreen} />
+      <Tab.Screen name="Bus" component={BusStack} options={{ title: "Book Bus" }} />
       <Tab.Screen name="History" component={RideHistoryScreen} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>

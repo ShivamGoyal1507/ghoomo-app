@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, useWindowDimensions } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useDispatch, useSelector } from "react-redux";
@@ -30,7 +30,17 @@ import {
 
 const createBusBookingId = () => `bus_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
-export default function BusBookingScreen({ navigation }) {
+const SECTION_ROUTES = "routes";
+const SECTION_MY = "my";
+const DETAIL_TAB_OVERVIEW = "overview";
+const DETAIL_TAB_STOPS = "stops";
+const DETAIL_TAB_POLICY = "policy";
+
+
+export default function BusBookingScreen({ navigation, route }) {
+  const { width } = useWindowDimensions();
+  const isTablet = width >= 768;
+  const routeCardWidth = isTablet ? (width - SPACING.md * 2 - 12) / 2 : "100%";
   const dispatch = useDispatch();
   const user = useSelector((state) => state.auth.user);
   const busBookings = useSelector((state) => state.booking.busBookings);
@@ -38,6 +48,7 @@ export default function BusBookingScreen({ navigation }) {
   const routes = liveRoutes;
   const [selectedRoute, setSelectedRoute] = useState(null);
   const [step, setStep] = useState("routes");
+  const [detailTab, setDetailTab] = useState(DETAIL_TAB_OVERVIEW);
   const [lastBooking, setLastBooking] = useState(null);
   const [now, setNow] = useState(new Date());
 
@@ -69,6 +80,20 @@ export default function BusBookingScreen({ navigation }) {
       setSelectedRoute(routes[0]);
     }
   }, [routes, selectedRoute]);
+
+  useEffect(() => {
+    const preferredRouteId = route?.params?.routeId;
+    if (!preferredRouteId || routes.length === 0) return;
+
+    const matchedRoute = routes.find((item) => item.id === preferredRouteId);
+    if (!matchedRoute) return;
+
+    setSelectedRoute(matchedRoute);
+    if (route?.params?.openRouteDetails) {
+      setStep("seats");
+      setDetailTab(DETAIL_TAB_OVERVIEW);
+    }
+  }, [route?.params?.routeId, route?.params?.openRouteDetails, routes]);
 
   useEffect(() => {
     if (step !== "routes" && !selectedRoute) {
@@ -242,17 +267,17 @@ export default function BusBookingScreen({ navigation }) {
               }}
               variant="outline"
             />
-            <Button title="View My Bookings" onPress={() => setStep("my")} style={{ marginTop: 10 }} />
+            <Button title="View My Bookings" onPress={() => setStep(SECTION_MY)} style={{ marginTop: 10 }} />
           </View>
         </ScrollView>
       </SafeAreaView>
     );
   }
 
-  if (step === "my") {
+  if (step === SECTION_MY) {
     return (
       <SafeAreaView style={styles.safe} edges={["top"]}>
-        <Header title="My Bus Bookings" onBack={() => setStep("routes")} />
+        <Header title="College Bus" subtitle="My bookings" onBack={() => setStep(SECTION_ROUTES)} />
         <ScrollView style={styles.scroll} contentContainerStyle={{ padding: SPACING.md }}>
           {userBusBookings.length === 0 ? (
             <View style={styles.emptyState}>
@@ -344,15 +369,52 @@ export default function BusBookingScreen({ navigation }) {
           title="Book Ticket"
           subtitle={selectedRoute.name}
           onBack={() => {
-            setStep("routes");
+            setStep(SECTION_ROUTES);
           }}
-          rightComponent={
-            <TouchableOpacity onPress={() => setStep("my")} style={styles.myBookingsBtn}>
-              <Ionicons name="ticket" size={16} color={COLORS.primary} />
-              <Text style={styles.myBookingsBtnText}>My Bookings</Text>
-            </TouchableOpacity>
-          }
         />
+
+        <View style={styles.detailTabsRow}>
+          <TouchableOpacity
+            style={[styles.detailTabBtn, detailTab === DETAIL_TAB_OVERVIEW ? styles.detailTabBtnActive : null]}
+            onPress={() => setDetailTab(DETAIL_TAB_OVERVIEW)}
+          >
+            <Text
+              style={[
+                styles.detailTabText,
+                detailTab === DETAIL_TAB_OVERVIEW ? styles.detailTabTextActive : null,
+              ]}
+            >
+              Overview
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.detailTabBtn, detailTab === DETAIL_TAB_STOPS ? styles.detailTabBtnActive : null]}
+            onPress={() => setDetailTab(DETAIL_TAB_STOPS)}
+          >
+            <Text
+              style={[
+                styles.detailTabText,
+                detailTab === DETAIL_TAB_STOPS ? styles.detailTabTextActive : null,
+              ]}
+            >
+              Stops
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.detailTabBtn, detailTab === DETAIL_TAB_POLICY ? styles.detailTabBtnActive : null]}
+            onPress={() => setDetailTab(DETAIL_TAB_POLICY)}
+          >
+            <Text
+              style={[
+                styles.detailTabText,
+                detailTab === DETAIL_TAB_POLICY ? styles.detailTabTextActive : null,
+              ]}
+            >
+              Policy
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         <ScrollView style={styles.scroll}>
           <View style={{ paddingHorizontal: SPACING.md, paddingTop: SPACING.md }}>
             <Card style={styles.routeInfoCard}>
@@ -380,17 +442,17 @@ export default function BusBookingScreen({ navigation }) {
               </View>
             </Card>
 
-            {!bookingWindow.canBook ? (
-              <Card style={styles.infoCard}>
-                <Ionicons name="time" size={20} color={COLORS.warning} />
-                <Text style={styles.infoText}>
-                  Booking opens exactly one hour before departure. Next opening is at {formatShortTime(bookingWindow.opensAt)}.
-                </Text>
-              </Card>
-            ) : null}
-
-            {bookingWindow.canBook ? (
+            {detailTab === DETAIL_TAB_OVERVIEW ? (
               <>
+                {!bookingWindow.canBook ? (
+                  <Card style={styles.infoCard}>
+                    <Ionicons name="time" size={20} color={COLORS.warning} />
+                    <Text style={styles.infoText}>
+                      Booking opens at {formatShortTime(bookingWindow.opensAt)}.
+                    </Text>
+                  </Card>
+                ) : null}
+
                 {existingRouteBooking ? (
                   <Card style={styles.infoCard}>
                     <View style={styles.existingBookingBlock}>
@@ -402,8 +464,8 @@ export default function BusBookingScreen({ navigation }) {
                         />
                         <Text style={styles.infoText}>
                           {existingRouteBooking.isWaiting
-                            ? `You already have a waiting list booking on this route: WL ${existingRouteBooking.waitlistPosition}.`
-                            : `You already have a confirmed booking on this route: Seat ${existingRouteBooking.seatNumber}.`}
+                            ? `You are waitlisted (WL ${existingRouteBooking.waitlistPosition}).`
+                            : `Seat ${existingRouteBooking.seatNumber} is already confirmed for you.`}
                         </Text>
                       </View>
                       <TouchableOpacity
@@ -439,31 +501,50 @@ export default function BusBookingScreen({ navigation }) {
                       </TouchableOpacity>
                     </View>
                   </Card>
-                ) : null}
-                <Text style={styles.selectionTitle}>Ticket Availability</Text>
-                {occupancy.availableSeats.length === 0 ? (
-                  <Card style={styles.infoCard}>
-                    <Ionicons name="alert-circle" size={20} color={COLORS.warning} />
-                    <Text style={styles.infoText}>All seats are taken. If you continue, you will be added to the waiting list automatically.</Text>
-                  </Card>
                 ) : (
                   <Card style={styles.infoCard}>
-                    <Ionicons name="checkmark-circle" size={20} color={COLORS.success} />
+                    <Ionicons
+                      name={occupancy.availableSeatCount > 0 ? "checkmark-circle" : "alert-circle"}
+                      size={20}
+                      color={occupancy.availableSeatCount > 0 ? COLORS.success : COLORS.warning}
+                    />
                     <Text style={styles.infoText}>
-                      Ticket booking is direct. The system will assign the next available seat automatically after booking.
+                      {occupancy.availableSeatCount > 0
+                        ? `${occupancy.availableSeatCount} seats available. Seat is auto-assigned.`
+                        : occupancy.waitlistRemaining > 0
+                          ? `Seats full. ${occupancy.waitlistRemaining} waitlist slots available.`
+                          : "Route and waitlist are full right now."}
                     </Text>
                   </Card>
                 )}
+              </>
+            ) : null}
 
-                <Text style={styles.selectionTitle}>Route Status</Text>
+            {detailTab === DETAIL_TAB_STOPS ? (
+              <Card style={styles.stopsCard}>
+                {selectedRoute.stops.map((stop, index) => (
+                  <View key={`${stop}-${index}`} style={styles.stopItemRow}>
+                    <View style={styles.stopIndexDot}>
+                      <Text style={styles.stopIndexText}>{index + 1}</Text>
+                    </View>
+                    <Text style={styles.stopItemText}>{stop}</Text>
+                  </View>
+                ))}
+              </Card>
+            ) : null}
+
+            {detailTab === DETAIL_TAB_POLICY ? (
+              <>
                 <Card style={styles.infoCard}>
-                  <Ionicons name="people" size={20} color={COLORS.primary} />
+                  <Ionicons name="time" size={20} color={COLORS.primary} />
                   <Text style={styles.infoText}>
-                    {occupancy.availableSeatCount > 0
-                      ? `${occupancy.availableSeatCount} seats are currently available. You do not need to choose a seat manually.`
-                      : occupancy.waitlistRemaining > 0
-                        ? `No seats are left. ${occupancy.waitlistRemaining} waiting list spots are still open.`
-                        : "No seats or waiting list spots are available for this route right now."}
+                    Booking closes at departure time ({formatShortTime(bookingWindow.departure)}).
+                  </Text>
+                </Card>
+                <Card style={styles.infoCard}>
+                  <Ionicons name="close-circle" size={20} color={COLORS.warning} />
+                  <Text style={styles.infoText}>
+                    Cancellation allowed till {formatShortTime(bookingWindow.cancelClosesAt)}.
                   </Text>
                 </Card>
               </>
@@ -495,14 +576,8 @@ export default function BusBookingScreen({ navigation }) {
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <Header
         title="College Bus"
-        subtitle="Real-time booking and waitlist"
+        subtitle="Book route tickets"
         onBack={() => navigation.goBack()}
-        rightComponent={
-          <TouchableOpacity onPress={() => setStep("my")} style={styles.myBookingsBtn}>
-            <Ionicons name="ticket" size={16} color={COLORS.primary} />
-            <Text style={styles.myBookingsBtnText}>My Bookings ({userBusBookings.length})</Text>
-          </TouchableOpacity>
-        }
       />
       <ScrollView style={styles.scroll} contentContainerStyle={{ padding: SPACING.md }}>
         <Text style={styles.pageTitle}>Available Routes</Text>
@@ -513,7 +588,8 @@ export default function BusBookingScreen({ navigation }) {
             <Text style={styles.emptySub}>Please check again later or contact support.</Text>
           </Card>
         ) : (
-          sortedRoutes.map((route) => {
+          <View style={styles.routesGrid}>
+          {sortedRoutes.map((route) => {
             const occupancy = getOccupancy(route);
             const bookingWindow = getBookingWindow(route, now);
             const demand = getDemandLabel(occupancy.occupancyRatio);
@@ -527,6 +603,7 @@ export default function BusBookingScreen({ navigation }) {
                   setStep("seats");
                 }}
                 activeOpacity={0.85}
+                style={{ width: routeCardWidth }}
               >
                 <Card elevated style={styles.routeCard}>
                   <View style={styles.routeHeader}>
@@ -570,35 +647,28 @@ export default function BusBookingScreen({ navigation }) {
                     <View style={styles.routeDetail}>
                       <Ionicons name="people" size={14} color={COLORS.success} />
                       <Text style={styles.routeDetailText}>
-                        {occupancy.availableSeatCount} seats • {occupancy.waitlistRemaining}/{BUS_WAITLIST_LIMIT} WL left
+                        {occupancy.availableSeatCount} seats • {occupancy.waitlistRemaining}/{BUS_WAITLIST_LIMIT} WL
                       </Text>
                     </View>
                   </View>
-                  <View style={styles.capacityBar}>
-                    <View
-                      style={[
-                        styles.capacityFill,
-                        {
-                          width: `${occupancy.occupancyRatio * 100}%`,
-                          backgroundColor: demand.color,
-                        },
-                      ]}
-                    />
-                  </View>
-                  <View style={styles.capacityRow}>
-                    <Text style={styles.capacityText}>
-                      {existingRouteBooking
-                        ? existingRouteBooking.isWaiting
-                          ? "You already have a waitlist booking on this route"
-                          : "You already have an active booking on this route"
-                        : "Direct booking with automatic seat assignment"}
-                    </Text>
-                    <Text style={styles.waitingText}>Cancel till {formatShortTime(bookingWindow.cancelClosesAt)}</Text>
+                  <View style={styles.routeActionRow}>
+                    <TouchableOpacity
+                      style={styles.cardActionBtn}
+                      onPress={() => {
+                        setSelectedRoute(route);
+                        setStep("seats");
+                        setDetailTab(DETAIL_TAB_OVERVIEW);
+                      }}
+                    >
+                      <Ionicons name="ticket" size={14} color={COLORS.primary} />
+                      <Text style={styles.cardActionText}>Book</Text>
+                    </TouchableOpacity>
                   </View>
                 </Card>
               </TouchableOpacity>
             );
-          })
+          })}
+          </View>
         )}
       </ScrollView>
     </SafeAreaView>
@@ -608,7 +678,35 @@ export default function BusBookingScreen({ navigation }) {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.background },
   scroll: { flex: 1 },
+  sectionTabsRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: SPACING.md,
+    paddingBottom: 8,
+    backgroundColor: COLORS.white,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  sectionTabBtn: {
+    flex: 1,
+    minHeight: 38,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: COLORS.white,
+    paddingHorizontal: 8,
+  },
+  sectionTabBtnActive: {
+    backgroundColor: COLORS.primary,
+  },
+  sectionTabText: { fontSize: 12, fontWeight: "700", color: COLORS.primary },
+  sectionTabTextActive: { color: COLORS.white },
   pageTitle: { fontSize: 22, fontWeight: "800", color: COLORS.text, marginBottom: SPACING.md },
+  routesGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
   routeCard: { marginBottom: SPACING.md },
   routeHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 12 },
   busIconGrad: { width: 48, height: 48, borderRadius: 14, alignItems: "center", justifyContent: "center" },
@@ -618,11 +716,20 @@ const styles = StyleSheet.create({
   routeDetails: { gap: 8, marginBottom: 12 },
   routeDetail: { flexDirection: "row", alignItems: "center", gap: 6 },
   routeDetailText: { fontSize: 12, color: COLORS.textSecondary },
-  capacityBar: { height: 6, backgroundColor: COLORS.border, borderRadius: 3, marginBottom: 6 },
-  capacityFill: { height: 6, borderRadius: 3 },
-  capacityRow: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
-  capacityText: { flex: 1, fontSize: 12, color: COLORS.text, fontWeight: "600" },
-  waitingText: { fontSize: 12, color: COLORS.warning, fontWeight: "600" },
+  routeActionRow: { flexDirection: "row", gap: 8, marginTop: 4 },
+  cardActionBtn: {
+    flex: 1,
+    minHeight: 36,
+    borderWidth: 1,
+    borderColor: COLORS.primary + "30",
+    borderRadius: 10,
+    backgroundColor: COLORS.primary + "10",
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 6,
+  },
+  cardActionText: { fontSize: 12, fontWeight: "700", color: COLORS.primary },
   routeInfoCard: { marginBottom: SPACING.md },
   routeMetaTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
   routeOpenText: { fontSize: 12, color: COLORS.textSecondary, fontWeight: "600" },
@@ -632,9 +739,47 @@ const styles = StyleSheet.create({
   routeMeta: { fontSize: 11, color: COLORS.textSecondary },
   selectionTitle: { fontSize: 15, fontWeight: "800", color: COLORS.text, marginBottom: 10, marginTop: 8 },
   infoCard: { flexDirection: "row", alignItems: "flex-start", gap: 10, marginBottom: SPACING.md },
+  detailTabsRow: {
+    flexDirection: "row",
+    paddingHorizontal: SPACING.md,
+    paddingBottom: 8,
+    gap: 8,
+    backgroundColor: COLORS.white,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  detailTabBtn: {
+    flex: 1,
+    minHeight: 34,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.grayLight,
+  },
+  detailTabBtnActive: {
+    borderColor: COLORS.primary,
+    backgroundColor: COLORS.primary + "15",
+  },
+  detailTabText: { fontSize: 12, fontWeight: "700", color: COLORS.textSecondary },
+  detailTabTextActive: { color: COLORS.primary },
   existingBookingBlock: { flex: 1 },
   existingBookingHeader: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   infoText: { flex: 1, fontSize: 13, color: COLORS.textSecondary, lineHeight: 18 },
+  stopsCard: { marginBottom: SPACING.md },
+  stopItemRow: { flexDirection: "row", alignItems: "center", marginBottom: 10 },
+  stopIndexDot: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+  },
+  stopIndexText: { fontSize: 11, fontWeight: "800", color: COLORS.white },
+  stopItemText: { fontSize: 13, color: COLORS.text, fontWeight: "600" },
   availableSeatGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: SPACING.md },
   availableSeatChip: { borderRadius: 12, borderWidth: 1.5, borderColor: COLORS.border, paddingHorizontal: 14, paddingVertical: 12, backgroundColor: COLORS.white },
   availableSeatChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
@@ -647,8 +792,19 @@ const styles = StyleSheet.create({
   bookBtnWrap: { backgroundColor: COLORS.white, paddingHorizontal: SPACING.md, paddingVertical: SPACING.md, paddingBottom: 28, shadowColor: "#000", shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 10 },
   selectedSeatInfo: { backgroundColor: COLORS.primary + "15", borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8, marginBottom: 12 },
   selectedSeatText: { fontSize: 14, fontWeight: "700", color: COLORS.primary },
-  myBookingsBtn: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: COLORS.primary + "15", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6 },
-  myBookingsBtnText: { fontSize: 12, color: COLORS.primary, fontWeight: "700" },
+  trackRouteBtn: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: COLORS.primary + "35",
+    borderRadius: 10,
+    backgroundColor: COLORS.primary + "10",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  trackRouteBtnText: { flex: 1, marginLeft: 6, fontSize: 12, fontWeight: "700", color: COLORS.primary },
   myBookingCard: { marginBottom: SPACING.md, alignItems: "center" },
   myBookingHeader: { flexDirection: "row", alignItems: "center", marginBottom: SPACING.md, width: "100%" },
   busIcon: { width: 42, height: 42, borderRadius: 12, backgroundColor: COLORS.success, alignItems: "center", justifyContent: "center" },

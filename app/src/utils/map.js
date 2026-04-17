@@ -1,4 +1,17 @@
 const TILE_SIZE = 256;
+const TILE_URL_TEMPLATE = (process.env.EXPO_PUBLIC_MAP_TILE_URL_TEMPLATE || "").trim();
+
+function buildTileUrl(zoom, x, y) {
+  if (!TILE_URL_TEMPLATE) {
+    throw new Error(
+      "Map tile URL template is not configured. Set EXPO_PUBLIC_MAP_TILE_URL_TEMPLATE."
+    );
+  }
+
+  return TILE_URL_TEMPLATE.replace("{z}", String(zoom))
+    .replace("{x}", String(x))
+    .replace("{y}", String(y));
+}
 
 export function latLonToWorld({ latitude, longitude }, zoom) {
   const scale = TILE_SIZE * 2 ** zoom;
@@ -58,7 +71,7 @@ export function buildTileGrid(region, rows = 3, cols = 3) {
         y,
         left: x * TILE_SIZE - originX,
         top: y * TILE_SIZE - originY,
-        url: `https://tile.openstreetmap.org/${region.zoom}/${x}/${y}.png`,
+        url: buildTileUrl(region.zoom, x, y),
       });
     }
   }

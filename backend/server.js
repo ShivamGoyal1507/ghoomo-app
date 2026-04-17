@@ -139,6 +139,31 @@ function summarizeBusRoutesWithBookings(store) {
   });
 }
 
+function summarizeBusDriverLocations(store) {
+  const users = Array.isArray(store.users) ? store.users : [];
+  return users
+    .filter(
+      (user) =>
+        user &&
+        user.role === USER_ROLES.DRIVER &&
+        String(user.vehicleType || "").toLowerCase() === "bus" &&
+        normalizeText(user.busRoute) &&
+        Number.isFinite(Number(user.currentLocation?.latitude)) &&
+        Number.isFinite(Number(user.currentLocation?.longitude))
+    )
+    .map((driver) => ({
+      routeId: normalizeText(driver.busRoute),
+      driverId: driver.id,
+      driverName: driver.name,
+      online: Boolean(driver.online),
+      lastSeenAt: driver.lastSeenAt || null,
+      location: {
+        latitude: Number(driver.currentLocation.latitude),
+        longitude: Number(driver.currentLocation.longitude),
+      },
+    }));
+}
+
 function resequenceWaitingList(store, routeId) {
   const waitingBookings = (store.busBookings || [])
     .filter(
@@ -169,6 +194,7 @@ function publishBusRealtimeUpdate(store) {
     ts: new Date().toISOString(),
     routes: summarizeBusRoutesWithBookings(store),
     busBookings: Array.isArray(store.busBookings) ? store.busBookings : [],
+    busLocations: summarizeBusDriverLocations(store),
   };
 
   for (const socket of busRealtimeSubscribers) {
@@ -283,6 +309,12 @@ function safeUser(user) {
   if (!user) return null;
   const { password, pushToken, ...rest } = user;
   return rest;
+}
+
+function generateAuthToken(user) {
+  // Simple token generation - base64 encode user ID with timestamp
+  const payload = `${user.id}:${Date.now()}`;
+  return Buffer.from(payload).toString('base64');
 }
 
 function normalizeText(value) {
@@ -1157,7 +1189,8 @@ async function requestHandler(req, res) {
         return;
       }
 
-      sendJson(res, 200, { user: safeUser(user) });
+      const token = generateAuthToken(user);
+      sendJson(res, 200, { token, user: safeUser(user) });
       return;
     }
 
@@ -1180,7 +1213,8 @@ async function requestHandler(req, res) {
       try {
         await writeStore(store);
         console.log(`[Register] User created: ${user.email} (${user.id})`);
-        sendJson(res, 201, { user: safeUser(user) });
+        const token = generateAuthToken(user);
+        sendJson(res, 201, { token, user: safeUser(user) });
       } catch (error) {
         console.error(`[Register] Database write failed for ${user.email}:`, error.message);
         if (error.code === "STORE_VERSION_CONFLICT") {
@@ -1929,6 +1963,9 @@ async function requestHandler(req, res) {
       driver.online = Boolean(body.online);
       driver.lastSeenAt = new Date().toISOString();
       await writeStore(store);
+      if (String(driver.vehicleType || "").toLowerCase() === "bus") {
+        publishBusRealtimeUpdate(store);
+      }
       sendJson(res, 200, { driver: safeUser(driver) });
       return;
     }
@@ -1972,6 +2009,9 @@ async function requestHandler(req, res) {
       });
 
       await writeStore(store);
+      if (String(driver.vehicleType || "").toLowerCase() === "bus") {
+        publishBusRealtimeUpdate(store);
+      }
       touchedRideIds.forEach((rideId) => publishRideRealtimeUpdate(store, rideId));
       const dashboard = buildDriverDashboard(store, driverId);
       sendJson(res, 200, dashboard);

@@ -29,8 +29,6 @@ function isFirebaseAvailable() {
 }
 
 // Google OAuth Configuration - configure platform-specific IDs in .env
-const DEFAULT_GOOGLE_CLIENT_ID =
-  "1024739915849-mfbsap813iku307ui69toqo4ljnlo5k3.apps.googleusercontent.com";
 
 function normalizeClientId(value) {
   if (!value || typeof value !== "string") return null;
@@ -47,7 +45,7 @@ const envExpoClientId = normalizeClientId(process.env.EXPO_PUBLIC_GOOGLE_EXPO_CL
 const baseClientId =
   envWebClientId || envIosClientId || envAndroidClientId || envExpoClientId || legacyClientId;
 
-const webClientId = envWebClientId || baseClientId || DEFAULT_GOOGLE_CLIENT_ID;
+const webClientId = envWebClientId || baseClientId;
 const iosClientId = envIosClientId || webClientId;
 const androidClientId = envAndroidClientId || webClientId;
 const expoClientId = envExpoClientId || webClientId;
