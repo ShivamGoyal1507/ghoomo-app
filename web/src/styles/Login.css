@@ -89,6 +89,35 @@
   margin-bottom: 28px;
 }
 
+.login-mode-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.mode-btn {
+  border: 1px solid var(--ink-300);
+  background: #fff;
+  color: var(--ink-700);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mode-btn:hover {
+  border-color: var(--primary);
+}
+
+.mode-btn.active {
+  border-color: var(--primary);
+  color: var(--primary-dark);
+  background: rgba(15, 118, 110, 0.08);
+}
+
 .login-form {
   display: flex;
   flex-direction: column;

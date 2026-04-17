@@ -59,6 +59,41 @@ export function AuthProvider({ children }) {
     }
   };
 
+  const registerAdmin = async ({
+    name,
+    email,
+    phone,
+    city,
+    emergencyContact,
+    password,
+    employeeId,
+    organization,
+  }) => {
+    try {
+      setLoading(true);
+      await api.post('/auth/register', {
+        role: 'admin',
+        name,
+        email,
+        phone,
+        city,
+        emergencyContact,
+        password,
+        employeeId,
+        organization,
+      });
+
+      // Reuse login flow so auth state/local storage is set consistently.
+      await login(email, password);
+      return true;
+    } catch (error) {
+      console.error('Admin registration failed:', error);
+      throw new Error(error.response?.data?.message || 'Admin account creation failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const logout = () => {
     localStorage.removeItem('admin_token');
     localStorage.removeItem('admin_user');
@@ -67,7 +102,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, isAuthenticated, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, isAuthenticated, login, registerAdmin, logout }}>
       {children}
     </AuthContext.Provider>
   );
