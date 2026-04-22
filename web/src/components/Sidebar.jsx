@@ -11,6 +11,7 @@ export default function Sidebar({ open, onToggle }) {
     { icon: '👨‍💼', label: 'Drivers', path: '/dashboard/drivers' },
     { icon: '🚗', label: 'Rides', path: '/dashboard/rides' },
     { icon: '🗺️', label: 'Routes', path: '/dashboard/routes' },
+    { icon: '📋', label: 'Bus Schedule', path: '/dashboard/bus-schedule' },
   ];
 
   const isActive = (path) => location.pathname === path || location.pathname.startsWith(path + '/');

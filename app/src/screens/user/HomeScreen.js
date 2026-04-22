@@ -1,18 +1,12 @@
 
 import React from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions, StatusBar } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, StatusBar, useWindowDimensions } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useDispatch, useSelector } from "react-redux";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { COLORS, FARES, RADIUS, SHADOWS, SPACING } from "../../constants";
 import { setUserFooterMode } from "../../store/slices/navigationPreferencesSlice";
-
-const { width } = Dimensions.get("window");
-const isTablet = width >= 768;
-const serviceCardWidth = isTablet
-  ? (width - SPACING.md * 2 - 36) / 4
-  : (width - SPACING.md * 2 - 12) / 2;
 
 const SERVICES = [
   { id: "bike", label: "Bike", icon: "bicycle", color: "#FF6B35", gradient: ["#FF6B35", "#FF8C60"], screen: "BookRide", params: { rideType: "bike" }, mode: "shared" },
@@ -25,6 +19,12 @@ export default function HomeScreen({ navigation }) {
   const dispatch = useDispatch();
   const user = useSelector(s => s.auth.user);
   const activeBooking = useSelector(s => s.booking.activeBooking);
+  const { width } = useWindowDimensions();
+  const isTablet = width >= 768;
+  const isSmall = width < 380;
+  const serviceCardWidth = isTablet
+    ? (width - SPACING.md * 2 - 36) / 4
+    : (width - SPACING.md * 2 - 12) / 2;
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good Morning" : hour < 17 ? "Good Afternoon" : "Good Evening";
 

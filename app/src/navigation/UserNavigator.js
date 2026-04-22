@@ -17,6 +17,7 @@ import RideTrackingScreen from "../screens/user/RideTrackingScreen";
 import RideHistoryScreen from "../screens/user/RideHistoryScreen";
 import ProfileScreen from "../screens/user/ProfileScreen";
 import SharedRidesScreen from "../screens/user/SharedRidesScreen";
+import BusScheduleScreen from "../screens/user/BusScheduleScreen";
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -30,6 +31,7 @@ function HomeStack() {
       <Stack.Screen name="BookRide" component={BookRideScreen} />
       <Stack.Screen name="BusBooking" component={BusBookingScreen} />
       <Stack.Screen name="CollegeBusLive" component={CollegeBusLiveScreen} />
+      <Stack.Screen name="BusSchedule" component={BusScheduleScreen} />
       <Stack.Screen name="RideTracking" component={RideTrackingScreen} />
     </Stack.Navigator>
   );
@@ -84,8 +86,8 @@ const styles = StyleSheet.create({
   tabBar: {
     backgroundColor: COLORS.white,
     borderTopWidth: 0,
-    height: 60,
-    paddingBottom: 8,
+    height: 62,
+    paddingBottom: 10,
     paddingTop: 6,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: -4 },

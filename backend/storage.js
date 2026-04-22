@@ -67,6 +67,12 @@ CREATE TABLE IF NOT EXISTS app_store_meta (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS app_bus_schedule (
+  id TEXT PRIMARY KEY,
+  payload JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 INSERT INTO app_store_meta (key, version)
 VALUES ('primary', 1)
 ON CONFLICT (key) DO NOTHING;
@@ -99,6 +105,7 @@ function normalizeStore(input) {
     busRoutes: Array.isArray(source.busRoutes) ? source.busRoutes : [],
     busBookings: Array.isArray(source.busBookings) ? source.busBookings : [],
     sharedRideRequests: Array.isArray(source.sharedRideRequests) ? source.sharedRideRequests : [],
+    busSchedule: source.busSchedule || null,
     __version: Number(source.__version || 1),
   };
 }
@@ -470,6 +477,19 @@ async function replaceSharedRideRequests(client, sharedRideRequests) {
   );
 }
 
+async function replaceBusSchedule(client, busSchedule) {
+  if (!busSchedule) {
+    await client.query(`DELETE FROM app_bus_schedule WHERE id = 'latest'`);
+    return;
+  }
+  await client.query(
+    `INSERT INTO app_bus_schedule (id, payload, updated_at) 
+     VALUES ('latest', $1::jsonb, NOW())
+     ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()`,
+    [JSON.stringify(busSchedule)]
+  );
+}
+
 async function readStoreFromDb(pool) {
   const result = await pool.query(
     `
@@ -479,6 +499,7 @@ async function readStoreFromDb(pool) {
       COALESCE((SELECT jsonb_agg(payload ORDER BY created_at DESC, id DESC) FROM app_bus_routes), '[]'::jsonb) AS bus_routes,
       COALESCE((SELECT jsonb_agg(payload ORDER BY created_at DESC, id DESC) FROM app_bus_bookings), '[]'::jsonb) AS bus_bookings,
       COALESCE((SELECT jsonb_agg(payload ORDER BY created_at DESC, id DESC) FROM app_shared_ride_requests), '[]'::jsonb) AS shared_ride_requests,
+      (SELECT payload FROM app_bus_schedule WHERE id = 'latest') AS bus_schedule,
       (SELECT version FROM app_store_meta WHERE key = $1) AS version
     `,
     [STORE_KEY]
@@ -491,6 +512,7 @@ async function readStoreFromDb(pool) {
     busRoutes: row.bus_routes,
     busBookings: row.bus_bookings,
     sharedRideRequests: row.shared_ride_requests,
+    busSchedule: row.bus_schedule,
     __version: Number(row.version || 1),
   });
 }
@@ -522,6 +544,7 @@ async function writeStoreToDb(pool, store) {
     await replaceRides(client, normalizedStore.rides);
     await replaceSharedRideRequests(client, normalizedStore.sharedRideRequests);
     await replaceBusBookings(client, normalizedStore.busBookings);
+    await replaceBusSchedule(client, normalizedStore.busSchedule);
 
     await client.query(
       "UPDATE app_store_meta SET version = version + 1, updated_at = NOW() WHERE key = $1",

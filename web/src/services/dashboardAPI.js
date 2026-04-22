@@ -496,6 +496,27 @@ export const dashboardAPI = {
     },
     () => Promise.reject(new Error('Delete route is not available on this backend.'))
   ),
+
+  getBusSchedule: withBackendFallback(
+    async () => {
+      // Supabase: could store in a settings table, for now use backend
+      return api.get('/bus-schedule').then((res) => ({ data: res.data }));
+    },
+    async () => {
+      const res = await api.get('/bus-schedule');
+      return { data: res.data };
+    }
+  ),
+
+  uploadBusSchedule: withBackendFallback(
+    async (data) => {
+      return api.post('/bus-schedule/upload', data).then((res) => ({ data: res.data }));
+    },
+    async (data) => {
+      const res = await api.post('/bus-schedule/upload', data);
+      return { data: res.data };
+    }
+  ),
 };
 
 export default dashboardAPI;

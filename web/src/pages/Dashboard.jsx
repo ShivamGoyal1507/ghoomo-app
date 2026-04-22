@@ -7,6 +7,7 @@ import Drivers from '../components/Drivers';
 import Rides from '../components/Rides';
 import Routes_Component from '../components/Routes';
 import RouteDetails from '../components/RouteDetails';
+import BusSchedule from '../components/BusSchedule';
 import Sidebar from '../components/Sidebar';
 import '../styles/Dashboard.css';
 
@@ -56,6 +57,7 @@ export default function Dashboard() {
             <Route path="/rides" element={<Rides />} />
             <Route path="/routes" element={<Routes_Component />} />
             <Route path="/routes/:routeId" element={<RouteDetails />} />
+            <Route path="/bus-schedule" element={<BusSchedule />} />
             <Route path="*" element={<Navigate to="overview" replace />} />
           </Routes>
         </main>

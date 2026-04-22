@@ -48,6 +48,7 @@ const DEFAULT_STORE = {
   busRoutes: DEFAULT_BUS_ROUTES,
   busBookings: [],
   sharedRideRequests: [],
+  busSchedule: null,
 };
 
 let storage;
@@ -1533,6 +1534,36 @@ async function requestHandler(req, res) {
       const nearLon = Number(requestUrl.searchParams.get("lon") || DEFAULT_CITY.lon);
       const places = await searchPlaces(query, { lat: nearLat, lon: nearLon });
       sendJson(res, 200, { places });
+      return;
+    }
+
+    // Bus Schedule PDF Upload (Admin)
+    if (req.method === "POST" && requestUrl.pathname === "/api/bus-schedule/upload") {
+      const body = await parseBody(req);
+      const store = await readStore();
+      if (!body.pdfBase64 || typeof body.pdfBase64 !== "string") {
+        sendJson(res, 400, { message: "pdfBase64 field is required." });
+        return;
+      }
+      store.busSchedule = {
+        pdfBase64: body.pdfBase64,
+        fileName: normalizeText(body.fileName) || "bus_schedule.pdf",
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: normalizeText(body.uploadedBy) || "admin",
+      };
+      await writeStore(store);
+      sendJson(res, 200, { message: "Bus schedule uploaded successfully.", schedule: { fileName: store.busSchedule.fileName, uploadedAt: store.busSchedule.uploadedAt } });
+      return;
+    }
+
+    // Get Bus Schedule (for mobile / admin)
+    if (req.method === "GET" && requestUrl.pathname === "/api/bus-schedule") {
+      const store = await readStore();
+      if (!store.busSchedule) {
+        sendJson(res, 200, { schedule: null });
+        return;
+      }
+      sendJson(res, 200, { schedule: store.busSchedule });
       return;
     }
 

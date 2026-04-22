@@ -1,311 +1,535 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, useWindowDimensions } from "react-native";
+import React, { useEffect, useState, useMemo, useCallback } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  useWindowDimensions,
+  ActivityIndicator,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { useSelector } from "react-redux";
 import { SafeAreaView } from "react-native-safe-area-context";
+import Svg, { Circle, Path, Line, Rect, Text as SvgText } from "react-native-svg";
 import Header from "../../components/common/Header";
 import Card from "../../components/common/Card";
-import Badge from "../../components/common/Badge";
-import { COLORS, SPACING } from "../../constants";
-import { getBusLiveSnapshot, getGpsBusLiveSnapshot } from "../../utils/busTracking";
+import { COLORS, SPACING, RADIUS, SHADOWS } from "../../constants";
+import { getStopCoordinates, haversineKm, estimateTravelMinutes } from "../../constants/iitrprStops";
 import { subscribeBusRealtime } from "../../services/realtime";
-import { BUS_TRACKING_MODE, BUS_TRACKING_MODES } from "../../config/tracking";
+import { getBusLiveSnapshot, getGpsBusLiveSnapshot, buildBusStopPoints } from "../../utils/busTracking";
+import { buildTileGrid, getMapRegion, projectToGrid, latLonToWorld } from "../../utils/map";
 
-function formatTimeLabel(date) {
-  return date.toLocaleTimeString("en-IN", {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+const MIN_ZOOM = 10;
+const MAX_ZOOM = 16;
+
+function buildPath(points, region, grid) {
+  return points
+    .map((point, index) => {
+      const projected = projectToGrid(point, region, grid);
+      return `${index === 0 ? "M" : "L"} ${projected.x.toFixed(1)} ${projected.y.toFixed(1)}`;
+    })
+    .join(" ");
 }
 
-function getStopEta(snapshot, stopIndex) {
-  const arrival = new Date(snapshot.departureAt);
-  const addMinutes = stopIndex * 8;
-  arrival.setMinutes(arrival.getMinutes() + addMinutes);
-  return formatTimeLabel(arrival);
-}
+export default function CollegeBusLiveScreen({ navigation, route: navRoute }) {
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const isWide = screenWidth >= 768;
+  const mapHeight = isWide ? screenHeight * 0.5 : screenHeight * 0.42;
 
-function RouteProgressView({ snapshot, compactLayout }) {
-  const busPositionPercent = `${Math.max(0, Math.min(snapshot.progress * 100, 100)).toFixed(2)}%`;
-
-  return (
-    <>
-      <Card style={styles.liveStatusCard}>
-        <View style={styles.liveHeaderRow}>
-          <View style={styles.liveIconWrap}>
-            <Ionicons name="bus" size={24} color={COLORS.white} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.liveTitle}>Live Status</Text>
-            <Text style={styles.liveSubtitle}>{snapshot.statusLabel}</Text>
-          </View>
-          <Badge
-            color={snapshot.progress >= 1 ? COLORS.success : COLORS.primary}
-            label={snapshot.progress >= 1 ? "Completed" : "Live"}
-          />
-        </View>
-
-        <View style={styles.progressMetrics}>
-          <View style={[styles.metricBox, compactLayout ? styles.metricBoxCompact : null]}>
-            <Text style={styles.metricLabel}>Departure</Text>
-            <Text style={styles.metricValue}>{formatTimeLabel(snapshot.departureAt)}</Text>
-          </View>
-          <View style={[styles.metricBox, compactLayout ? styles.metricBoxCompact : null]}>
-            <Text style={styles.metricLabel}>Next Stop ETA</Text>
-            <Text style={styles.metricValue}>
-              {snapshot.progress >= 1 ? "Arrived" : `${snapshot.etaToNextStopMinutes} min`}
-            </Text>
-          </View>
-          <View style={[styles.metricBox, compactLayout ? styles.metricBoxCompact : null]}>
-            <Text style={styles.metricLabel}>Route ETA</Text>
-            <Text style={styles.metricValue}>
-              {snapshot.progress >= 1 ? "Done" : `${snapshot.etaMinutes} min`}
-            </Text>
-          </View>
-        </View>
-
-      </Card>
-
-      <Card style={styles.timelineCard}>
-        <Text style={styles.timelineTitle}>Stops</Text>
-        <View style={styles.timelineWrap}>
-          <View style={styles.timelineLine} />
-          <View style={[styles.busFloating, { top: busPositionPercent }]}> 
-            <Ionicons name="bus" size={15} color={COLORS.white} />
-          </View>
-
-          {snapshot.stops.map((stop, index) => {
-            const isPassed = index <= snapshot.fromStop.index;
-            const isCurrent = stop.index === snapshot.fromStop.index || stop.index === snapshot.toStop.index;
-
-            return (
-              <View key={stop.id} style={styles.stopRow}>
-                <View
-                  style={[
-                    styles.stopDot,
-                    isPassed ? styles.stopDotPassed : null,
-                    isCurrent ? styles.stopDotCurrent : null,
-                  ]}
-                />
-                <View style={styles.stopContent}>
-                  <Text style={[styles.stopName, isCurrent ? styles.stopNameCurrent : null]}>{stop.name}</Text>
-                  <Text style={styles.stopMeta}>{getStopEta(snapshot, index)}</Text>
-                </View>
-                {isCurrent && snapshot.progress < 1 ? (
-                  <View style={styles.livePill}>
-                    <Text style={styles.livePillText}>Live</Text>
-                  </View>
-                ) : null}
-              </View>
-            );
-          })}
-        </View>
-      </Card>
-
-    </>
-  );
-}
-
-export default function CollegeBusLiveScreen({ navigation, route }) {
-  const { width } = useWindowDimensions();
-  const compactLayout = width < 390;
+  const routeId = navRoute?.params?.routeId;
   const routes = useSelector((state) => state.busRoutes.routes);
+  const busRoute = useMemo(() => routes.find((r) => r.id === routeId), [routes, routeId]);
+
+  const [liveBusLocation, setLiveBusLocation] = useState(null);
   const [now, setNow] = useState(new Date());
-  const [selectedRouteId, setSelectedRouteId] = useState(route?.params?.routeId || null);
-  const [routeBusLocations, setRouteBusLocations] = useState({});
+  const [zoom, setZoom] = useState(13);
 
+  // Realtime subscription
   useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 10000);
-    return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    const unsubscribe = subscribeBusRealtime({
-      onBusUpdate: (payload) => {
-        const locations = Array.isArray(payload?.busLocations) ? payload.busLocations : [];
-        const byRoute = {};
-
-        locations.forEach((item) => {
-          const routeId = String(item?.routeId || "").trim();
-          const latitude = Number(item?.location?.latitude);
-          const longitude = Number(item?.location?.longitude);
-          if (!routeId || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-            return;
-          }
-
-          const previous = byRoute[routeId];
-          const currentTs = new Date(item?.lastSeenAt || 0).getTime();
-          const previousTs = new Date(previous?.lastSeenAt || 0).getTime();
-          if (!previous || currentTs >= previousTs) {
-            byRoute[routeId] = {
-              routeId,
-              driverId: item.driverId,
-              driverName: item.driverName,
-              online: Boolean(item.online),
-              lastSeenAt: item.lastSeenAt || null,
-              location: { latitude, longitude },
-            };
-          }
+    const unsubscribe = subscribeBusRealtime((drivers) => {
+      if (!Array.isArray(drivers)) return;
+      const match = drivers.find((d) => d.routeId === routeId);
+      if (match) {
+        setLiveBusLocation({
+          latitude: Number(match.latitude),
+          longitude: Number(match.longitude),
         });
-
-        setRouteBusLocations(byRoute);
-      },
-      onError: () => {},
+      }
     });
+    return () => unsubscribe?.();
+  }, [routeId]);
 
-    return () => unsubscribe();
+  // Time ticker
+  useEffect(() => {
+    const interval = setInterval(() => setNow(new Date()), 5000);
+    return () => clearInterval(interval);
   }, []);
 
-  useEffect(() => {
-    if (routes.length === 0) return;
-    if (!selectedRouteId) {
-      setSelectedRouteId(routes[0].id);
-      return;
+  // Build stop points with real GPS coordinates
+  const stops = useMemo(() => {
+    if (!busRoute) return [];
+    const routeStops = Array.isArray(busRoute.stops) ? busRoute.stops : [];
+    if (routeStops.length < 2) {
+      return buildBusStopPoints(busRoute);
     }
+    return routeStops.map((stopName, index) => {
+      const coords = getStopCoordinates(stopName);
+      return {
+        id: `${routeId}_stop_${index}`,
+        name: String(stopName),
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        index,
+      };
+    });
+  }, [busRoute, routeId]);
 
-    const exists = routes.some((item) => item.id === selectedRouteId);
-    if (!exists) {
-      setSelectedRouteId(routes[0].id);
-    }
-  }, [routes, selectedRouteId]);
-
-  const selectedRoute = useMemo(
-    () => routes.find((item) => item.id === selectedRouteId) || null,
-    [routes, selectedRouteId]
-  );
-
-  const trackingMode = BUS_TRACKING_MODE;
-  const selectedRouteLive = selectedRoute ? routeBusLocations[selectedRoute.id] : null;
-
+  // Get snapshot based on live GPS or simulated
   const snapshot = useMemo(() => {
-    if (!selectedRoute) return null;
+    if (!busRoute) return null;
 
-    if (trackingMode === BUS_TRACKING_MODES.SIMULATED) {
-      return getBusLiveSnapshot(selectedRoute, now);
+    if (liveBusLocation) {
+      return getGpsBusLiveSnapshot(busRoute, liveBusLocation, now);
     }
+    return getBusLiveSnapshot(busRoute, now);
+  }, [busRoute, liveBusLocation, now]);
 
-    if (trackingMode === BUS_TRACKING_MODES.GPS) {
-      const gpsSnapshot = getGpsBusLiveSnapshot(selectedRoute, selectedRouteLive?.location, now);
-      return gpsSnapshot || getBusLiveSnapshot(selectedRoute, now);
-    }
+  // Calculate ETA for each stop from current bus position
+  const stopETAs = useMemo(() => {
+    if (!snapshot || !stops.length) return [];
+    const busLoc = snapshot.busLocation || (stops[0] ? stops[0] : null);
+    if (!busLoc) return stops.map(() => null);
 
-    const autoGpsSnapshot = getGpsBusLiveSnapshot(selectedRoute, selectedRouteLive?.location, now);
-    return autoGpsSnapshot || getBusLiveSnapshot(selectedRoute, now);
-  }, [selectedRoute, selectedRouteLive?.location, now, trackingMode]);
+    return stops.map((stop) => {
+      const distKm = haversineKm(busLoc, stop);
+      const etaMin = estimateTravelMinutes(distKm);
+      return { distKm, etaMin };
+    });
+  }, [snapshot, stops]);
+
+  // Map region
+  const allPoints = useMemo(() => {
+    const pts = [...stops];
+    if (snapshot?.busLocation) pts.push(snapshot.busLocation);
+    return pts.filter((p) => p && Number.isFinite(p.latitude));
+  }, [stops, snapshot?.busLocation]);
+
+  const autoRegion = useMemo(() => getMapRegion(allPoints), [allPoints]);
+  const region = useMemo(
+    () => ({ ...autoRegion, zoom: Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom)) }),
+    [autoRegion, zoom]
+  );
+  const grid = useMemo(() => buildTileGrid(region), [region]);
+
+  // Auto-fit zoom
+  useEffect(() => {
+    if (autoRegion.zoom) setZoom(autoRegion.zoom);
+  }, [autoRegion.zoom]);
+
+  const routePoints = useMemo(
+    () => stops.map((s) => ({ latitude: s.latitude, longitude: s.longitude })),
+    [stops]
+  );
+  const routePath = useMemo(() => buildPath(routePoints, region, grid), [routePoints, region, grid]);
+
+  const scale = Math.min(1, Math.max(0.42, (screenWidth - 32) / grid.width));
+  const canZoomIn = zoom < MAX_ZOOM;
+  const canZoomOut = zoom > MIN_ZOOM;
+
+  if (!busRoute) {
+    return (
+      <SafeAreaView style={styles.safe} edges={["top"]}>
+        <Header title="Bus Tracking" onBack={() => navigation.goBack()} />
+        <View style={styles.emptyState}>
+          <Ionicons name="bus-outline" size={48} color={COLORS.border} />
+          <Text style={styles.emptyText}>Bus route not found</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const isLive = !!liveBusLocation;
+  const progress = snapshot?.progress || 0;
+  const statusText = isLive
+    ? `Live • ${snapshot?.statusLabel || "Tracking"}`
+    : snapshot?.statusLabel || "Waiting for GPS...";
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <Header
-        title="Bus Live"
+        title={busRoute.name}
+        subtitle={`${busRoute.from} → ${busRoute.to}`}
         onBack={() => navigation.goBack()}
       />
 
-      {!selectedRoute || !snapshot ? (
-        <View style={styles.emptyWrap}>
-          <Ionicons name="bus-outline" size={44} color={COLORS.gray} />
-          <Text style={styles.emptyTitle}>No route found</Text>
-          <Text style={styles.emptyText}>Add a route to start tracking.</Text>
+      <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
+        {/* Map View */}
+        <View style={[styles.mapContainer, { height: mapHeight }]}>
+          <View style={[styles.canvasWrap, { transform: [{ scale }] }]}>
+            <View style={styles.canvas}>
+              {grid.tiles.map((tile) => (
+                <View key={tile.key} style={[styles.tile, { left: tile.left, top: tile.top }]}>
+                  <View style={styles.tilePlaceholder} />
+                </View>
+              ))}
+              {/* We use Svg to draw route + markers on the tile grid */}
+              <Svg width={grid.width} height={grid.height} style={styles.overlay}>
+                {/* Route line */}
+                {routePath ? (
+                  <Path
+                    d={routePath}
+                    stroke={COLORS.primary}
+                    strokeWidth={4}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    fill="none"
+                    strokeDasharray="8,4"
+                  />
+                ) : null}
+
+                {/* Stop markers */}
+                {stops.map((stop, index) => {
+                  const projected = projectToGrid(stop, region, grid);
+                  const isFirst = index === 0;
+                  const isLast = index === stops.length - 1;
+                  const color = isFirst ? COLORS.success : isLast ? COLORS.error : COLORS.primary;
+                  return (
+                    <React.Fragment key={stop.id}>
+                      <Circle cx={projected.x} cy={projected.y} r={10} fill={color} opacity={0.2} />
+                      <Circle cx={projected.x} cy={projected.y} r={6} fill={color} stroke="#FFF" strokeWidth={2} />
+                      <SvgText
+                        x={projected.x}
+                        y={projected.y - 14}
+                        fontSize={9}
+                        fontWeight="bold"
+                        fill={COLORS.text}
+                        textAnchor="middle"
+                      >
+                        {stop.name.length > 12 ? stop.name.substring(0, 12) + "…" : stop.name}
+                      </SvgText>
+                    </React.Fragment>
+                  );
+                })}
+
+                {/* Bus marker */}
+                {snapshot?.busLocation && (
+                  (() => {
+                    const bProj = projectToGrid(snapshot.busLocation, region, grid);
+                    return (
+                      <>
+                        <Circle cx={bProj.x} cy={bProj.y} r={16} fill="#F59E0B" opacity={0.25} />
+                        <Circle cx={bProj.x} cy={bProj.y} r={10} fill="#F59E0B" stroke="#FFF" strokeWidth={3} />
+                        <SvgText
+                          x={bProj.x}
+                          y={bProj.y + 4}
+                          fontSize={8}
+                          fontWeight="bold"
+                          fill="#FFF"
+                          textAnchor="middle"
+                        >
+                          🚌
+                        </SvgText>
+                      </>
+                    );
+                  })()
+                )}
+              </Svg>
+            </View>
+          </View>
+
+          {/* Map Attribution */}
+          <View style={styles.attribution}>
+            <Text style={styles.attributionText}>© OpenStreetMap</Text>
+          </View>
+
+          {/* Zoom Controls */}
+          <View style={styles.zoomControls}>
+            <TouchableOpacity
+              style={[styles.zoomBtn, !canZoomIn && styles.zoomBtnDisabled]}
+              onPress={() => setZoom((z) => Math.min(MAX_ZOOM, z + 1))}
+              disabled={!canZoomIn}
+            >
+              <Ionicons name="add" size={18} color={COLORS.text} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.zoomBtn, !canZoomOut && styles.zoomBtnDisabled]}
+              onPress={() => setZoom((z) => Math.max(MIN_ZOOM, z - 1))}
+              disabled={!canZoomOut}
+            >
+              <Ionicons name="remove" size={18} color={COLORS.text} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Status Overlay */}
+          <View style={styles.statusOverlay}>
+            <LinearGradient
+              colors={isLive ? ["#10B981", "#059669"] : ["#6366F1", "#4F46E5"]}
+              style={styles.statusBadge}
+            >
+              <View style={[styles.liveDot, { backgroundColor: isLive ? "#4ADE80" : "#A5B4FC" }]} />
+              <Text style={styles.statusBadgeText}>
+                {isLive ? "LIVE" : "SIMULATED"}
+              </Text>
+            </LinearGradient>
+          </View>
         </View>
-      ) : (
-        <>
-          <ScrollView style={styles.scroll} contentContainerStyle={{ padding: SPACING.md, paddingBottom: 30 }}>
-            <RouteProgressView snapshot={snapshot} compactLayout={compactLayout} />
-          </ScrollView>
-        </>
-      )}
+
+        {/* Trip Info Card */}
+        <View style={[styles.infoSection, isWide && styles.infoSectionWide]}>
+          <Card elevated style={styles.tripCard}>
+            <View style={styles.tripHeader}>
+              <View style={styles.tripHeaderLeft}>
+                <Text style={styles.tripTitle}>{busRoute.name}</Text>
+                <Text style={styles.tripSub}>{statusText}</Text>
+              </View>
+              <View style={styles.tripHeaderRight}>
+                <Text style={styles.tripEtaLabel}>ETA</Text>
+                <Text style={styles.tripEta}>
+                  {snapshot?.etaMinutes != null ? `${snapshot.etaMinutes} min` : "--"}
+                </Text>
+              </View>
+            </View>
+
+            {/* Progress Bar */}
+            <View style={styles.progressBarWrap}>
+              <View style={styles.progressBarBg}>
+                <LinearGradient
+                  colors={["#10B981", "#059669"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={[styles.progressBarFill, { width: `${Math.min(100, progress * 100)}%` }]}
+                />
+              </View>
+              <Text style={styles.progressText}>{Math.round(progress * 100)}% complete</Text>
+            </View>
+
+            {/* Trip Details */}
+            <View style={styles.tripDetailsRow}>
+              <View style={styles.tripDetail}>
+                <Ionicons name="time-outline" size={14} color={COLORS.primary} />
+                <Text style={styles.tripDetailText}>
+                  Departs: {busRoute.departureTime || "—"}
+                </Text>
+              </View>
+              <View style={styles.tripDetail}>
+                <Ionicons name="git-compare-outline" size={14} color={COLORS.primary} />
+                <Text style={styles.tripDetailText}>{stops.length} stops</Text>
+              </View>
+              {snapshot?.etaToNextStopMinutes != null && (
+                <View style={styles.tripDetail}>
+                  <Ionicons name="navigate-outline" size={14} color={COLORS.success} />
+                  <Text style={styles.tripDetailText}>
+                    Next stop: ~{snapshot.etaToNextStopMinutes} min
+                  </Text>
+                </View>
+              )}
+            </View>
+          </Card>
+
+          {/* Stop Timeline */}
+          <Text style={styles.sectionTitle}>Route Stops</Text>
+          {stops.map((stop, index) => {
+            const isFirst = index === 0;
+            const isLast = index === stops.length - 1;
+            const isPassed = progress > 0 && index / Math.max(stops.length - 1, 1) <= progress;
+            const isCurrent =
+              snapshot?.fromStop?.index === index || snapshot?.toStop?.index === index;
+            const eta = stopETAs[index];
+
+            return (
+              <View key={stop.id} style={styles.stopRow}>
+                {/* Timeline connector */}
+                <View style={styles.timelineCol}>
+                  {!isFirst && (
+                    <View style={[styles.timelineLine, isPassed && styles.timelineLinePassed]} />
+                  )}
+                  <View
+                    style={[
+                      styles.timelineDot,
+                      isPassed && styles.timelineDotPassed,
+                      isCurrent && styles.timelineDotCurrent,
+                    ]}
+                  >
+                    {isPassed && <Ionicons name="checkmark" size={10} color={COLORS.white} />}
+                    {isCurrent && !isPassed && (
+                      <View style={styles.currentPulse} />
+                    )}
+                  </View>
+                  {!isLast && (
+                    <View style={[styles.timelineLine, isPassed && styles.timelineLinePassed]} />
+                  )}
+                </View>
+
+                {/* Stop Info */}
+                <View style={[styles.stopInfo, isCurrent && styles.stopInfoCurrent]}>
+                  <View style={styles.stopNameRow}>
+                    <Text style={[styles.stopName, isPassed && styles.stopNamePassed]}>
+                      {stop.name}
+                    </Text>
+                    {isFirst && (
+                      <View style={[styles.stopBadge, { backgroundColor: "#DCFCE7" }]}>
+                        <Text style={[styles.stopBadgeText, { color: COLORS.success }]}>Start</Text>
+                      </View>
+                    )}
+                    {isLast && (
+                      <View style={[styles.stopBadge, { backgroundColor: "#FEE2E2" }]}>
+                        <Text style={[styles.stopBadgeText, { color: COLORS.error }]}>End</Text>
+                      </View>
+                    )}
+                    {isCurrent && !isFirst && !isLast && (
+                      <View style={[styles.stopBadge, { backgroundColor: "#DBEAFE" }]}>
+                        <Text style={[styles.stopBadgeText, { color: COLORS.primary }]}>Current</Text>
+                      </View>
+                    )}
+                  </View>
+                  {eta && !isPassed && (
+                    <Text style={styles.stopEta}>
+                      ~{eta.distKm.toFixed(1)} km • {eta.etaMin} min away
+                    </Text>
+                  )}
+                  {isPassed && <Text style={styles.stopPassed}>Passed</Text>}
+                </View>
+              </View>
+            );
+          })}
+
+          <View style={{ height: SPACING.xxl }} />
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.background },
-  emptyWrap: { flex: 1, alignItems: "center", justifyContent: "center", gap: 8, paddingHorizontal: SPACING.xl },
-  emptyTitle: { fontSize: 17, fontWeight: "800", color: COLORS.text },
-  emptyText: { fontSize: 13, color: COLORS.textSecondary, textAlign: "center" },
   scroll: { flex: 1 },
-  liveStatusCard: { marginBottom: SPACING.md },
-  liveHeaderRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 12 },
-  liveIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    alignItems: "center",
+  emptyState: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
+  emptyText: { fontSize: 16, color: COLORS.textSecondary, fontWeight: "600" },
+
+  // Map
+  mapContainer: {
+    backgroundColor: "#D9E8F3",
+    overflow: "hidden",
     justifyContent: "center",
-    backgroundColor: COLORS.primary,
   },
-  liveTitle: { fontSize: 16, fontWeight: "900", color: COLORS.text },
-  liveSubtitle: { fontSize: 12, color: COLORS.textSecondary, marginTop: 1 },
-  progressMetrics: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
-  metricBox: {
+  canvasWrap: { alignSelf: "center" },
+  canvas: { width: 256 * 3, height: 256 * 3, alignSelf: "center" },
+  tile: { position: "absolute", width: 256, height: 256 },
+  tilePlaceholder: {
     flex: 1,
-    minWidth: 96,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 12,
-    backgroundColor: COLORS.grayLight,
-    paddingHorizontal: 10,
-    paddingVertical: 10,
+    backgroundColor: "#E8EFF7",
+    borderWidth: 0.5,
+    borderColor: "#D0DBE8",
   },
-  metricBoxCompact: {
-    minWidth: "48%",
-  },
-  metricLabel: { fontSize: 10, color: COLORS.textSecondary, textTransform: "uppercase", letterSpacing: 0.3 },
-  metricValue: { fontSize: 13, color: COLORS.text, fontWeight: "800", marginTop: 2 },
-  timelineCard: { marginBottom: SPACING.md },
-  timelineTitle: { fontSize: 14, fontWeight: "800", color: COLORS.text, marginBottom: 10 },
-  timelineWrap: { paddingLeft: 16 },
-  timelineLine: {
+  overlay: { position: "absolute", left: 0, top: 0 },
+  attribution: {
     position: "absolute",
-    left: 5,
-    top: 10,
-    bottom: 12,
-    width: 2,
-    backgroundColor: COLORS.border,
+    right: 8,
+    bottom: 8,
+    backgroundColor: "rgba(255,255,255,0.88)",
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
   },
-  busFloating: {
+  attributionText: { fontSize: 9, color: COLORS.textSecondary, fontWeight: "600" },
+  zoomControls: {
     position: "absolute",
-    left: -4,
-    width: 20,
-    height: 20,
-    marginTop: 8,
+    right: 10,
+    top: "35%",
+    backgroundColor: "rgba(255,255,255,0.94)",
     borderRadius: 10,
-    backgroundColor: COLORS.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 2,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(15,23,42,0.08)",
   },
-  stopRow: {
-    minHeight: 52,
-    paddingBottom: 14,
+  zoomBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
+  zoomBtnDisabled: { opacity: 0.35 },
+  statusOverlay: {
+    position: "absolute",
+    left: 12,
+    top: 12,
+  },
+  statusBadge: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
   },
-  stopDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+  liveDot: { width: 8, height: 8, borderRadius: 4 },
+  statusBadgeText: { fontSize: 11, fontWeight: "800", color: COLORS.white, letterSpacing: 0.5 },
+
+  // Info Section
+  infoSection: { padding: SPACING.md },
+  infoSectionWide: { maxWidth: 700, alignSelf: "center", width: "100%" },
+  tripCard: { marginBottom: SPACING.md },
+  tripHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 },
+  tripHeaderLeft: { flex: 1 },
+  tripTitle: { fontSize: 17, fontWeight: "800", color: COLORS.text },
+  tripSub: { fontSize: 13, color: COLORS.textSecondary, marginTop: 3 },
+  tripHeaderRight: { alignItems: "flex-end", backgroundColor: COLORS.primary + "12", borderRadius: 12, paddingHorizontal: 14, paddingVertical: 8 },
+  tripEtaLabel: { fontSize: 10, color: COLORS.primary, fontWeight: "700" },
+  tripEta: { fontSize: 20, fontWeight: "900", color: COLORS.primary },
+
+  progressBarWrap: { marginBottom: 14 },
+  progressBarBg: {
+    height: 6,
+    backgroundColor: COLORS.border,
+    borderRadius: 3,
+    overflow: "hidden",
+  },
+  progressBarFill: { height: "100%", borderRadius: 3 },
+  progressText: { fontSize: 11, color: COLORS.textSecondary, fontWeight: "600", marginTop: 4 },
+
+  tripDetailsRow: { flexDirection: "row", flexWrap: "wrap", gap: 14 },
+  tripDetail: { flexDirection: "row", alignItems: "center", gap: 5 },
+  tripDetailText: { fontSize: 12, color: COLORS.textSecondary, fontWeight: "600" },
+
+  sectionTitle: { fontSize: 16, fontWeight: "800", color: COLORS.text, marginBottom: SPACING.sm, marginTop: 4 },
+
+  // Stop Timeline
+  stopRow: { flexDirection: "row", minHeight: 60 },
+  timelineCol: { width: 32, alignItems: "center" },
+  timelineLine: { flex: 1, width: 2, backgroundColor: COLORS.border },
+  timelineLinePassed: { backgroundColor: COLORS.success },
+  timelineDot: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: COLORS.border,
+    alignItems: "center",
+    justifyContent: "center",
     borderWidth: 2,
-    borderColor: COLORS.gray,
-    backgroundColor: COLORS.white,
-    marginRight: 12,
+    borderColor: COLORS.white,
+    ...SHADOWS.soft,
   },
-  stopDotPassed: {
-    backgroundColor: COLORS.success,
-    borderColor: COLORS.success,
+  timelineDotPassed: { backgroundColor: COLORS.success },
+  timelineDotCurrent: { backgroundColor: COLORS.primary, borderColor: COLORS.primaryLight, borderWidth: 3 },
+  currentPulse: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.white },
+
+  stopInfo: {
+    flex: 1,
+    paddingLeft: 12,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "transparent",
   },
-  stopDotCurrent: {
-    borderColor: COLORS.primary,
-    backgroundColor: COLORS.primary,
+  stopInfoCurrent: {
+    backgroundColor: COLORS.primary + "08",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginLeft: 8,
+    marginBottom: 4,
   },
-  stopContent: { flex: 1 },
-  stopName: { fontSize: 13, fontWeight: "700", color: COLORS.text },
-  stopNameCurrent: { color: COLORS.primary },
-  stopMeta: { fontSize: 11, color: COLORS.textSecondary, marginTop: 2 },
-  livePill: {
-    backgroundColor: COLORS.primary + "18",
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  livePillText: { fontSize: 10, fontWeight: "800", color: COLORS.primary },
+  stopNameRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  stopName: { fontSize: 14, fontWeight: "700", color: COLORS.text },
+  stopNamePassed: { color: COLORS.textSecondary },
+  stopBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  stopBadgeText: { fontSize: 10, fontWeight: "800" },
+  stopEta: { fontSize: 12, color: COLORS.textSecondary, marginTop: 3, fontWeight: "500" },
+  stopPassed: { fontSize: 12, color: COLORS.success, marginTop: 3, fontWeight: "600" },
 });

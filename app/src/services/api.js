@@ -223,4 +223,5 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ latitude, longitude }),
     }),
+  getBusSchedule: () => request("/api/bus-schedule"),
 };
